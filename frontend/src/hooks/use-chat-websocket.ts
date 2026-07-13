@@ -225,6 +225,14 @@ export function useChatListWebSocket(currentUserId?: string, currentlyViewedChat
 
   useEffect(() => {
     const unsubscribeSent = on('message_sent', (payload: MessageSentPayload) => {
+      // A message for a chat missing from the cache means a new or
+      // resurrected chat; refetch the list so it appears.
+      const cachedChats = queryClient.getQueryData<ChatInfo[]>(['chats'])
+      if (cachedChats && !cachedChats.some((chat) => chat.id === payload.chat_id)) {
+        queryClient.invalidateQueries({ queryKey: ['chats'] })
+        return
+      }
+
       queryClient.setQueryData<ChatInfo[]>(['chats'], (oldChats) => {
         if (!oldChats) return oldChats
 

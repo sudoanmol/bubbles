@@ -75,7 +75,6 @@ SELECT
     c.updated_at as chat_updated_at,
     u.id as member_id,
     u.username as member_username,
-    u.email as member_email,
     u.profile_image_url as member_profile_image_url
 FROM chats c
 INNER JOIN chat_members cm ON c.id = cm.chat_id
@@ -93,7 +92,6 @@ type GetChatByIdWithMembersRow struct {
 	ChatUpdatedAt         time.Time      `json:"chat_updated_at"`
 	MemberID              uuid.UUID      `json:"member_id"`
 	MemberUsername        string         `json:"member_username"`
-	MemberEmail           string         `json:"member_email"`
 	MemberProfileImageUrl sql.NullString `json:"member_profile_image_url"`
 }
 
@@ -115,7 +113,6 @@ func (q *Queries) GetChatByIdWithMembers(ctx context.Context, id uuid.UUID) ([]G
 			&i.ChatUpdatedAt,
 			&i.MemberID,
 			&i.MemberUsername,
-			&i.MemberEmail,
 			&i.MemberProfileImageUrl,
 		); err != nil {
 			return nil, err
@@ -301,7 +298,6 @@ SELECT
     uc.updated_at as chat_updated_at,
     u.id as member_id,
     u.username as member_username,
-    u.email as member_email,
     u.profile_image_url as member_profile_image_url,
     COALESCE(uc.msg_id, '00000000-0000-0000-0000-000000000000'::uuid) as last_message_id,
     uc.msg_content as last_message_content,
@@ -328,7 +324,6 @@ type GetChatsWithMembersRow struct {
 	ChatUpdatedAt                    time.Time      `json:"chat_updated_at"`
 	MemberID                         uuid.UUID      `json:"member_id"`
 	MemberUsername                   string         `json:"member_username"`
-	MemberEmail                      string         `json:"member_email"`
 	MemberProfileImageUrl            sql.NullString `json:"member_profile_image_url"`
 	LastMessageID                    uuid.UUID      `json:"last_message_id"`
 	LastMessageContent               sql.NullString `json:"last_message_content"`
@@ -358,7 +353,6 @@ func (q *Queries) GetChatsWithMembers(ctx context.Context, userID uuid.UUID) ([]
 			&i.ChatUpdatedAt,
 			&i.MemberID,
 			&i.MemberUsername,
-			&i.MemberEmail,
 			&i.MemberProfileImageUrl,
 			&i.LastMessageID,
 			&i.LastMessageContent,
@@ -432,7 +426,7 @@ func (q *Queries) RemoveChatMember(ctx context.Context, arg RemoveChatMemberPara
 }
 
 const searchUsers = `-- name: SearchUsers :many
-SELECT id, username, email, profile_image_url, created_at, updated_at
+SELECT id, username, profile_image_url, created_at, updated_at
 FROM users
 WHERE username ILIKE '%' || $1 || '%'
 AND id != ALL($2::uuid[])
@@ -447,7 +441,6 @@ type SearchUsersParams struct {
 type SearchUsersRow struct {
 	ID              uuid.UUID      `json:"id"`
 	Username        string         `json:"username"`
-	Email           string         `json:"email"`
 	ProfileImageUrl sql.NullString `json:"profile_image_url"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
@@ -465,7 +458,6 @@ func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]Sea
 		if err := rows.Scan(
 			&i.ID,
 			&i.Username,
-			&i.Email,
 			&i.ProfileImageUrl,
 			&i.CreatedAt,
 			&i.UpdatedAt,

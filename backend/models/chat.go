@@ -14,7 +14,6 @@ type SearchUsersRequest struct {
 type SearchUsersResponse struct {
 	ID              uuid.UUID `json:"id"`
 	Username        string    `json:"username"`
-	Email           string    `json:"email"`
 	ProfileImageURL *string   `json:"profile_image_url,omitempty"`
 }
 
@@ -31,7 +30,6 @@ type CreateChatResponse struct {
 type ChatMember struct {
 	ID              uuid.UUID `json:"id"`
 	Username        string    `json:"username"`
-	Email           string    `json:"email"`
 	ProfileImageURL *string   `json:"profile_image_url,omitempty"`
 }
 

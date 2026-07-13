@@ -2,6 +2,7 @@ package routes
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -16,14 +17,29 @@ import (
 )
 
 type MessageHandler struct {
-	dbService *database.Service
-	hub       *ws.Hub
+	dbService     *database.Service
+	hub           *ws.Hub
+	uploadHandler *UploadHandler
 }
 
-func NewMessageHandler(dbService *database.Service, hub *ws.Hub) *MessageHandler {
+func NewMessageHandler(dbService *database.Service, hub *ws.Hub, uploadHandler *UploadHandler) *MessageHandler {
 	return &MessageHandler{
-		dbService: dbService,
-		hub:       hub,
+		dbService:     dbService,
+		hub:           hub,
+		uploadHandler: uploadHandler,
+	}
+}
+
+// deleteImagesFromStorage is best-effort cleanup after the DB rows are gone:
+// an orphaned object is preferable to broken image URLs or a failed request.
+func (h *MessageHandler) deleteImagesFromStorage(urls []string) {
+	if h.uploadHandler == nil {
+		return
+	}
+	for _, url := range urls {
+		if err := h.uploadHandler.DeleteImage(url); err != nil {
+			log.Printf("Failed to delete image from storage: url=%s, err=%v", url, err)
+		}
 	}
 }
 
@@ -441,8 +457,14 @@ func (h *MessageHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	// Get username for WebSocket broadcast
-	username, _ := c.Get("username")
+	// Use the DB username rather than the token claim, which can be stale
+	// for up to the token lifetime after a rename.
+	senderUsername := ""
+	if sender, err := h.dbService.Queries.GetUserByID(c.Request.Context(), userID.(uuid.UUID)); err == nil {
+		senderUsername = sender.Username
+	} else if username, ok := c.Get("username"); ok {
+		senderUsername, _ = username.(string)
+	}
 
 	// Prepare content for broadcast
 	var broadcastContent *string
@@ -457,7 +479,7 @@ func (h *MessageHandler) SendMessage(c *gin.Context) {
 			ID:             message.ID.String(),
 			ChatID:         chatID.String(),
 			SenderID:       userID.(uuid.UUID).String(),
-			SenderUsername: username.(string),
+			SenderUsername: senderUsername,
 			Content:        broadcastContent,
 			Images:         req.Images,
 			IsDeleted:      false,
@@ -472,7 +494,7 @@ func (h *MessageHandler) SendMessage(c *gin.Context) {
 	})
 }
 
-func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandler) {
+func (h *MessageHandler) EditMessage(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
@@ -541,6 +563,33 @@ func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandle
 		return
 	}
 
+	currentImages, err := h.dbService.Queries.GetMessageImages(c.Request.Context(), []uuid.UUID{messageID})
+	if err != nil && err != sql.ErrNoRows {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to get message images",
+		})
+		return
+	}
+
+	removedSet := make(map[string]struct{}, len(req.RemovedImages))
+	for _, url := range req.RemovedImages {
+		removedSet[url] = struct{}{}
+	}
+
+	imageUrls := make([]string, 0, len(currentImages))
+	for _, img := range currentImages {
+		if _, removed := removedSet[img.Url]; !removed {
+			imageUrls = append(imageUrls, img.Url)
+		}
+	}
+
+	if req.Content == "" && len(imageUrls) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Message must have content or images",
+		})
+		return
+	}
+
 	tx, err := h.dbService.DB.BeginTx(c.Request.Context(), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
@@ -557,7 +606,7 @@ func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandle
 		content = sql.NullString{String: req.Content, Valid: true}
 	}
 
-	err = qtx.EditMessage(c.Request.Context(), database.EditMessageParams{
+	updatedAt, err := qtx.EditMessage(c.Request.Context(), database.EditMessageParams{
 		ID:      messageID,
 		Content: content,
 	})
@@ -581,15 +630,6 @@ func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandle
 			})
 			return
 		}
-
-		for _, imageURL := range req.RemovedImages {
-			if err := uploadHandler.DeleteImage(imageURL); err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-					Error: "Failed to delete image from storage",
-				})
-				return
-			}
-		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -599,19 +639,7 @@ func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandle
 		return
 	}
 
-	// Get remaining images after deletion
-	remainingImages, err := h.dbService.Queries.GetMessageImages(c.Request.Context(), []uuid.UUID{messageID})
-	if err != nil && err != sql.ErrNoRows {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error: "Failed to get updated images",
-		})
-		return
-	}
-
-	imageUrls := make([]string, 0, len(remainingImages))
-	for _, img := range remainingImages {
-		imageUrls = append(imageUrls, img.Url)
-	}
+	h.deleteImagesFromStorage(req.RemovedImages)
 
 	// Prepare content for broadcast
 	var broadcastContent *string
@@ -628,7 +656,7 @@ func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandle
 			Content:   broadcastContent,
 			Images:    imageUrls,
 			IsEdited:  true,
-			UpdatedAt: time.Now(),
+			UpdatedAt: updatedAt,
 		},
 	})
 
@@ -637,7 +665,7 @@ func (h *MessageHandler) EditMessage(c *gin.Context, uploadHandler *UploadHandle
 	})
 }
 
-func (h *MessageHandler) DeleteMessage(c *gin.Context, uploadHandler *UploadHandler) {
+func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
@@ -717,15 +745,6 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context, uploadHandler *UploadHand
 		return
 	}
 
-	for _, image := range images {
-		if err := uploadHandler.DeleteImage(image.Url); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-				Error: "Failed to delete image from storage",
-			})
-			return
-		}
-	}
-
 	// Broadcast delete to WebSocket clients
 	h.hub.BroadcastToChat(message.ChatID.String(), ws.WSMessage{
 		Type: ws.EventMessageDeleted,
@@ -735,6 +754,12 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context, uploadHandler *UploadHand
 			IsDeleted: true,
 		},
 	})
+
+	imageUrls := make([]string, 0, len(images))
+	for _, image := range images {
+		imageUrls = append(imageUrls, image.Url)
+	}
+	h.deleteImagesFromStorage(imageUrls)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

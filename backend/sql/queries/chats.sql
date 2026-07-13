@@ -1,5 +1,5 @@
 -- name: SearchUsers :many
-SELECT id, username, email, profile_image_url, created_at, updated_at
+SELECT id, username, profile_image_url, created_at, updated_at
 FROM users
 WHERE username ILIKE '%' || sqlc.arg(query) || '%'
 AND id != ALL(sqlc.arg(excluded_ids)::uuid[])
@@ -38,7 +38,6 @@ SELECT
     c.updated_at as chat_updated_at,
     u.id as member_id,
     u.username as member_username,
-    u.email as member_email,
     u.profile_image_url as member_profile_image_url
 FROM chats c
 INNER JOIN chat_members cm ON c.id = cm.chat_id
@@ -99,7 +98,6 @@ SELECT
     uc.updated_at as chat_updated_at,
     u.id as member_id,
     u.username as member_username,
-    u.email as member_email,
     u.profile_image_url as member_profile_image_url,
     COALESCE(uc.msg_id, '00000000-0000-0000-0000-000000000000'::uuid) as last_message_id,
     uc.msg_content as last_message_content,

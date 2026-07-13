@@ -1,3 +1,4 @@
+import { useWebSocket } from '@/contexts/websocket-context'
 import {
   addChatMemberFn,
   changeChatAdminFn,
@@ -52,6 +53,7 @@ type ChatActionsProps = {
 export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, children }: ChatActionsProps) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { leaveChat } = useWebSocket()
   const [confirmAction, setConfirmAction] = useState<ConfirmableAction>(null)
   const [isRenameOpen, setIsRenameOpen] = useState(false)
   const [isMembersOpen, setIsMembersOpen] = useState(false)
@@ -157,6 +159,9 @@ export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, chil
       const fullyDeleted = data?.fully_deleted ?? false
       toast.success(fullyDeleted ? 'Chat permanently deleted' : 'Chat removed')
       setConfirmAction(null)
+      if (fullyDeleted) {
+        leaveChat(chat.id)
+      }
       await invalidateChatData({ removeChat: fullyDeleted })
       if (isActive) {
         void navigate({ to: '/chats' })
@@ -179,6 +184,7 @@ export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, chil
     onSuccess: async () => {
       toast.success('You left the chat')
       setConfirmAction(null)
+      leaveChat(chat.id)
       await invalidateChatData({ removeChat: true })
       if (isActive) {
         void navigate({ to: '/chats' })
@@ -228,7 +234,10 @@ export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, chil
     },
     onSuccess: async (user) => {
       toast.success(`${user.username} added`)
-      setMembers((prev) => [...prev, { id: user.id, username: user.username, email: user.email }])
+      setMembers((prev) => [
+        ...prev,
+        { id: user.id, username: user.username, profile_image_url: user.profile_image_url },
+      ])
       await invalidateChatData()
     },
     onError: (error) => {
@@ -479,10 +488,9 @@ export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, chil
                   <div className="divide-y">
                     {members.map((member) => (
                       <div key={member.id} className="flex items-center gap-3 px-3 py-2">
-                        <UserAvatar username={member.username} className="size-8" />
+                        <UserAvatar username={member.username} image={member.profile_image_url} className="size-8" />
                         <div className="flex-1">
                           <p className="text-sm font-medium">{member.username}</p>
-                          <p className="text-xs text-muted-foreground">{member.email}</p>
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {member.id === chat.creator_id ? 'Admin' : null}
@@ -527,10 +535,9 @@ export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, chil
                     <div className="divide-y">
                       {searchResults.map((user) => (
                         <div key={user.id} className="flex items-center gap-3 px-3 py-2">
-                          <UserAvatar username={user.username} className="size-8" />
+                          <UserAvatar username={user.username} image={user.profile_image_url} className="size-8" />
                           <div className="flex-1">
                             <p className="text-sm font-medium">{user.username}</p>
-                            <p className="text-xs text-muted-foreground">{user.email}</p>
                           </div>
                           <Button
                             size="sm"
@@ -563,10 +570,9 @@ export function ChatActions({ chat, currentUserId, isActive, onChatRemoved, chil
                 .filter((member) => member.id !== chat.creator_id)
                 .map((member) => (
                   <div key={member.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
-                    <UserAvatar username={member.username} className="size-8" />
+                    <UserAvatar username={member.username} image={member.profile_image_url} className="size-8" />
                     <div className="flex-1">
                       <p className="text-sm font-medium">{member.username}</p>
-                      <p className="text-xs text-muted-foreground">{member.email}</p>
                     </div>
                     <Button
                       size="sm"

@@ -12,7 +12,13 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 512 * 1024
+	maxMessageSize = 4 * 1024
+
+	// Token bucket for inbound events. The burst must cover a reconnecting
+	// client joining all of its chats at once; the sustained rate only needs
+	// to cover typing and read receipts.
+	eventRateBurst  = 200
+	eventRatePerSec = 20
 )
 
 type Client struct {
@@ -21,23 +27,70 @@ type Client struct {
 	send     chan []byte
 	userID   string
 	username string
-	email    string
+	// rooms is guarded by hub.mu.
+	rooms map[string]bool
+
+	tokens      float64
+	lastRefill  time.Time
+	expiryTimer *time.Timer
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, userID, username, email string) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, userID, username string) *Client {
 	return &Client{
-		hub:      hub,
-		conn:     conn,
-		send:     make(chan []byte, 256),
-		userID:   userID,
-		username: username,
-		email:    email,
+		hub:        hub,
+		conn:       conn,
+		send:       make(chan []byte, 256),
+		userID:     userID,
+		username:   username,
+		rooms:      make(map[string]bool),
+		tokens:     eventRateBurst,
+		lastRefill: time.Now(),
 	}
+}
+
+// allowEvent implements a token bucket; only called from ReadPump so no
+// locking is needed.
+func (c *Client) allowEvent() bool {
+	now := time.Now()
+	c.tokens += now.Sub(c.lastRefill).Seconds() * eventRatePerSec
+	if c.tokens > eventRateBurst {
+		c.tokens = eventRateBurst
+	}
+	c.lastRefill = now
+
+	if c.tokens < 1 {
+		return false
+	}
+	c.tokens--
+	return true
+}
+
+func (c *Client) closeGracefully() {
+	c.closeWithReason(websocket.CloseGoingAway, "server shutting down")
+}
+
+func (c *Client) closeWithReason(code int, reason string) {
+	deadline := time.Now().Add(writeWait)
+	c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), deadline)
+	c.conn.Close()
+}
+
+// CloseWhenTokenExpires closes the connection once the JWT that authenticated
+// it expires, so an open socket cannot outlive its credentials. The client
+// reconnects with a fresh token.
+func (c *Client) CloseWhenTokenExpires(expiresAt time.Time) {
+	c.expiryTimer = time.AfterFunc(time.Until(expiresAt), func() {
+		log.Printf("Closing connection with expired token: user_id=%s", c.userID)
+		c.closeWithReason(websocket.ClosePolicyViolation, "token expired")
+	})
 }
 
 func (c *Client) ReadPump() {
 	defer func() {
-		c.hub.Unregister <- c
+		if c.expiryTimer != nil {
+			c.expiryTimer.Stop()
+		}
+		c.hub.UnregisterClient(c)
 		c.conn.Close()
 	}()
 
@@ -64,6 +117,11 @@ func (c *Client) ReadPump() {
 			continue
 		}
 
+		if !c.allowEvent() {
+			log.Printf("Rate limit exceeded, dropping event: user_id=%s, type=%s", c.userID, clientMsg.Type)
+			continue
+		}
+
 		switch clientMsg.Type {
 		case EventJoinChat:
 			if !c.hub.SubscribeToChat(c, clientMsg.Payload.ChatID) {
@@ -73,41 +131,21 @@ func (c *Client) ReadPump() {
 		case EventLeaveChat:
 			c.hub.UnsubscribeFromChat(c, clientMsg.Payload.ChatID)
 
-		case EventTypingStart:
-			if c.hub.ValidateMembership(c.userID, clientMsg.Payload.ChatID) {
-				c.hub.BroadcastTyping(clientMsg.Payload.ChatID, EventTypingStart, TypingPayload{
-					ChatID:          clientMsg.Payload.ChatID,
-					UserID:          c.userID,
-					Username:        c.username,
-					ProfileImageURL: clientMsg.Payload.ProfileImageURL,
-				})
-			}
-
-		case EventTypingStop:
-			if c.hub.ValidateMembership(c.userID, clientMsg.Payload.ChatID) {
-				c.hub.BroadcastTyping(clientMsg.Payload.ChatID, EventTypingStop, TypingPayload{
-					ChatID:          clientMsg.Payload.ChatID,
-					UserID:          c.userID,
-					Username:        c.username,
-					ProfileImageURL: clientMsg.Payload.ProfileImageURL,
+		case EventTypingStart, EventTypingStop:
+			if c.hub.IsSubscribed(c, clientMsg.Payload.ChatID) {
+				c.hub.BroadcastTyping(clientMsg.Payload.ChatID, clientMsg.Type, TypingPayload{
+					ChatID:   clientMsg.Payload.ChatID,
+					UserID:   c.userID,
+					Username: c.username,
 				})
 			}
 
 		case EventMessageRead:
-			if clientMsg.Payload.MessageID == "" || clientMsg.Payload.ChatID == "" || clientMsg.Payload.MessageCreatedAt == nil {
+			if clientMsg.Payload.MessageID == "" || clientMsg.Payload.ChatID == "" {
 				log.Printf("Invalid read receipt payload from user_id=%s", c.userID)
 				continue
 			}
-
-			select {
-			case c.hub.readReceiptSem <- struct{}{}:
-				go func(uid, cid, mid string, createdAt time.Time) {
-					defer func() { <-c.hub.readReceiptSem }()
-					c.hub.HandleReadReceipt(uid, cid, mid, createdAt)
-				}(c.userID, clientMsg.Payload.ChatID, clientMsg.Payload.MessageID, *clientMsg.Payload.MessageCreatedAt)
-			default:
-				log.Printf("Read receipt queue full, dropping receipt: user_id=%s, chat_id=%s", c.userID, clientMsg.Payload.ChatID)
-			}
+			c.hub.HandleReadReceipt(c, clientMsg.Payload.ChatID, clientMsg.Payload.MessageID)
 		}
 	}
 }

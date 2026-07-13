@@ -1,14 +1,12 @@
 export type ChatUser = {
   id: string
   username: string
-  email: string
   profile_image_url?: string | null
 }
 
 export type ChatMember = {
   id: string
   username: string
-  email: string
   profile_image_url?: string | null
 }
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -35,10 +36,10 @@ func HandleWebSocket(hub *ws.Hub) gin.HandlerFunc {
 			return
 		}
 
-		parts := strings.Split(protocols, ", ")
+		parts := strings.Split(protocols, ",")
 		var token string
 		for _, p := range parts {
-			if after, found := strings.CutPrefix(p, "Bearer."); found {
+			if after, found := strings.CutPrefix(strings.TrimSpace(p), "Bearer."); found {
 				token = after
 				break
 			}
@@ -68,8 +69,18 @@ func HandleWebSocket(hub *ws.Hub) gin.HandlerFunc {
 			return
 		}
 
-		client := ws.NewClient(hub, conn, claims.UserID.String(), claims.Username, claims.Email)
-		hub.Register <- client
+		client := ws.NewClient(hub, conn, claims.UserID.String(), claims.Username)
+		if !hub.RegisterClient(client) {
+			conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many connections"),
+				time.Now().Add(5*time.Second))
+			conn.Close()
+			return
+		}
+
+		if claims.ExpiresAt != nil {
+			client.CloseWhenTokenExpires(claims.ExpiresAt.Time)
+		}
 
 		go client.WritePump()
 		go client.ReadPump()

@@ -3,7 +3,7 @@ package routes
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -13,17 +13,20 @@ import (
 	"github.com/anmol7470/bubbles/backend/database"
 	"github.com/anmol7470/bubbles/backend/models"
 	"github.com/anmol7470/bubbles/backend/utils"
+	ws "github.com/anmol7470/bubbles/backend/websocket"
 )
 
 type ChatActionsHandler struct {
 	dbService     *database.Service
 	uploadHandler *UploadHandler
+	hub           *ws.Hub
 }
 
-func NewChatActionsHandler(dbService *database.Service, uploadHandler *UploadHandler) *ChatActionsHandler {
+func NewChatActionsHandler(dbService *database.Service, uploadHandler *UploadHandler, hub *ws.Hub) *ChatActionsHandler {
 	return &ChatActionsHandler{
 		dbService:     dbService,
 		uploadHandler: uploadHandler,
+		hub:           hub,
 	}
 }
 
@@ -135,10 +138,11 @@ func (h *ChatActionsHandler) DeleteChat(c *gin.Context) {
 		if fullyDeleted {
 			if err := h.deleteChatWithAssets(c.Request.Context(), chatID); err != nil {
 				c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-					Error: err.Error(),
+					Error: "Failed to delete chat",
 				})
 				return
 			}
+			h.hub.EvictAllFromChat(chatID.String())
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -157,10 +161,11 @@ func (h *ChatActionsHandler) DeleteChat(c *gin.Context) {
 
 	if err := h.deleteChatWithAssets(c.Request.Context(), chatID); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error: err.Error(),
+			Error: "Failed to delete chat",
 		})
 		return
 	}
+	h.hub.EvictAllFromChat(chatID.String())
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":       true,
@@ -234,6 +239,8 @@ func (h *ChatActionsHandler) LeaveChat(c *gin.Context) {
 		})
 		return
 	}
+
+	h.hub.EvictUserFromChat(userID.String(), chatID.String())
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -406,6 +413,8 @@ func (h *ChatActionsHandler) AddChatMember(c *gin.Context) {
 		return
 	}
 
+	h.hub.NotifyChatCreated(chatID.String(), []uuid.UUID{targetID})
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 	})
@@ -508,6 +517,8 @@ func (h *ChatActionsHandler) RemoveChatMember(c *gin.Context) {
 		return
 	}
 
+	h.hub.EvictUserFromChat(targetID.String(), chatID.String())
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 	})
@@ -609,10 +620,6 @@ func (h *ChatActionsHandler) ChangeChatAdmin(c *gin.Context) {
 }
 
 func (h *ChatActionsHandler) deleteChatWithAssets(ctx context.Context, chatID uuid.UUID) error {
-	if h.uploadHandler == nil {
-		return errors.New("file storage is not configured")
-	}
-
 	imageURLs, err := h.dbService.Queries.GetChatImageUrls(ctx, chatID)
 	if err != nil {
 		return err
@@ -622,9 +629,13 @@ func (h *ChatActionsHandler) deleteChatWithAssets(ctx context.Context, chatID uu
 		return err
 	}
 
-	for _, imageURL := range imageURLs {
-		if err := h.uploadHandler.DeleteImage(imageURL); err != nil {
-			return err
+	// Storage cleanup is best-effort: the chat is already gone from the DB,
+	// so an orphaned object is preferable to failing the request.
+	if h.uploadHandler != nil {
+		for _, imageURL := range imageURLs {
+			if err := h.uploadHandler.DeleteImage(imageURL); err != nil {
+				log.Printf("Failed to delete image from storage: url=%s, err=%v", imageURL, err)
+			}
 		}
 	}
 

@@ -76,10 +76,11 @@ UPDATE messages
 SET is_deleted = true, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1;
 
--- name: EditMessage :exec
+-- name: EditMessage :one
 UPDATE messages
 SET content = $2, is_edited = true, updated_at = CURRENT_TIMESTAMP
-WHERE id = $1;
+WHERE id = $1
+RETURNING updated_at;
 
 -- name: GetMessageById :one
 SELECT

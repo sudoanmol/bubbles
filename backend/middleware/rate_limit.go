@@ -96,11 +96,11 @@ func (rl *RateLimiter) createIPBasedMiddleware(lmt *limiter.Limiter) gin.Handler
 
 		context, err := lmt.Get(c.Request.Context(), key)
 		if err != nil {
-			log.Printf("Rate limiter error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Internal server error",
-			})
-			c.Abort()
+			// Fail open, consistent with the user-based limiter and the
+			// no-Redis-at-boot behavior: a rate limiter outage must not
+			// become a login outage.
+			log.Printf("Rate limiter error, allowing request: %v", err)
+			c.Next()
 			return
 		}
 

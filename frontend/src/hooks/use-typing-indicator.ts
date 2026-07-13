@@ -5,42 +5,46 @@ import { useDebounceCallback } from 'usehooks-ts'
 export type TypingUser = {
   user_id: string
   username: string
-  profile_image_url?: string | null
 }
 
-export function useTypingIndicator(
-  chatId: string,
-  currentUserId: string,
-  currentUsername: string,
-  currentUserProfileImageUrl?: string | null
-) {
+// If the typist's typing_stop never arrives (dropped connection, closed tab),
+// the indicator expires on its own instead of sticking forever.
+const TYPING_EXPIRY_MS = 5000
+
+export function useTypingIndicator(chatId: string, currentUserId: string) {
   const [typingUsers, setTypingUsers] = useState<Map<string, TypingUser>>(new Map())
   const { send, on } = useWebSocket()
   const isTypingRef = useRef(false)
+  const expiryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  const removeTypingUser = useCallback((userId: string) => {
+    const timer = expiryTimersRef.current.get(userId)
+    if (timer) {
+      clearTimeout(timer)
+      expiryTimersRef.current.delete(userId)
+    }
+    setTypingUsers((prev) => {
+      if (!prev.has(userId)) return prev
+      const next = new Map(prev)
+      next.delete(userId)
+      return next
+    })
+  }, [])
 
   const sendTypingStart = useCallback(() => {
     if (!isTypingRef.current) {
-      send('typing_start', {
-        chat_id: chatId,
-        user_id: currentUserId,
-        username: currentUsername,
-        profile_image_url: currentUserProfileImageUrl,
-      })
-      isTypingRef.current = true
+      if (send('typing_start', { chat_id: chatId })) {
+        isTypingRef.current = true
+      }
     }
-  }, [send, chatId, currentUserId, currentUsername, currentUserProfileImageUrl])
+  }, [send, chatId])
 
   const sendTypingStop = useCallback(() => {
     if (isTypingRef.current) {
-      send('typing_stop', {
-        chat_id: chatId,
-        user_id: currentUserId,
-        username: currentUsername,
-        profile_image_url: currentUserProfileImageUrl,
-      })
+      send('typing_stop', { chat_id: chatId })
       isTypingRef.current = false
     }
-  }, [send, chatId, currentUserId, currentUsername, currentUserProfileImageUrl])
+  }, [send, chatId])
 
   const debouncedTypingStop = useDebounceCallback(sendTypingStop, 2000)
 
@@ -55,15 +59,23 @@ export function useTypingIndicator(
   }, [debouncedTypingStop, sendTypingStop])
 
   useEffect(() => {
+    const timers = expiryTimersRef.current
+
     const unsubscribeStart = on('typing_start', (payload: TypingUser & { chat_id: string }) => {
       if (payload.chat_id !== chatId || payload.user_id === currentUserId) return
+
+      const existingTimer = timers.get(payload.user_id)
+      if (existingTimer) clearTimeout(existingTimer)
+      timers.set(
+        payload.user_id,
+        setTimeout(() => removeTypingUser(payload.user_id), TYPING_EXPIRY_MS)
+      )
 
       setTypingUsers((prev) => {
         const next = new Map(prev)
         next.set(payload.user_id, {
           user_id: payload.user_id,
           username: payload.username,
-          profile_image_url: payload.profile_image_url,
         })
         return next
       })
@@ -71,20 +83,18 @@ export function useTypingIndicator(
 
     const unsubscribeStop = on('typing_stop', (payload: TypingUser & { chat_id: string }) => {
       if (payload.chat_id !== chatId) return
-
-      setTypingUsers((prev) => {
-        const next = new Map(prev)
-        next.delete(payload.user_id)
-        return next
-      })
+      removeTypingUser(payload.user_id)
     })
 
     return () => {
       unsubscribeStart()
       unsubscribeStop()
       stopTyping()
+      timers.forEach((timer) => clearTimeout(timer))
+      timers.clear()
+      setTypingUsers(new Map())
     }
-  }, [chatId, currentUserId, on, stopTyping])
+  }, [chatId, currentUserId, on, stopTyping, removeTypingUser])
 
   return {
     typingUsers: Array.from(typingUsers.values()),

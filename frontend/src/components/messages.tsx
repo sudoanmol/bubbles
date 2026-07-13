@@ -128,14 +128,17 @@ export function Messages({ chatId, isGroupChat, currentUserId, members, typingUs
   const latestAckedOrderRef = useRef(-1)
 
   const sendReadReceipt = useCallback(
-    (messageId: string, messageCreatedAt: string) => {
-      send('message_read', {
+    (messageId: string) => {
+      const sent = send('message_read', {
         chat_id: chatId,
         message_id: messageId,
-        message_created_at: messageCreatedAt,
       })
 
-      // Optimistically reset unread count in chat list
+      // Only reset the unread badge when the receipt actually went out; a
+      // queued receipt may be discarded before delivery. The server echoes
+      // message_read back to us, which is the authoritative reset.
+      if (!sent) return
+
       queryClient.setQueryData<ChatInfo[]>(['chats'], (oldChats) => {
         if (!oldChats) return oldChats
 
@@ -159,14 +162,11 @@ export function Messages({ chatId, isGroupChat, currentUserId, members, typingUs
       if (latestAckedMessageIdRef.current === messageId) return
       if (candidateIndex <= latestAckedOrderRef.current) return
 
-      const message = messages[candidateIndex]
-      if (!message) return
-
       latestAckedMessageIdRef.current = messageId
       latestAckedOrderRef.current = candidateIndex
-      sendReadReceipt(messageId, message.created_at)
+      sendReadReceipt(messageId)
     },
-    [messageOrderMap, messages, sendReadReceipt]
+    [messageOrderMap, sendReadReceipt]
   )
 
   const getReceiptState = useCallback(
@@ -438,7 +438,7 @@ export function Messages({ chatId, isGroupChat, currentUserId, members, typingUs
                   <div className="flex justify-center">
                     <UserAvatar
                       username={typingUsers[0]?.username ?? 'Typing'}
-                      image={typingUsers[0]?.profile_image_url}
+                      image={members.find((member) => member.id === typingUsers[0]?.user_id)?.profile_image_url}
                       className="h-9 w-9"
                     />
                   </div>

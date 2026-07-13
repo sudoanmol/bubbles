@@ -13,6 +13,8 @@ const (
 	EventTypingStop     EventType = "typing_stop"
 	EventJoinChat       EventType = "join_chat"
 	EventLeaveChat      EventType = "leave_chat"
+	EventChatCreated    EventType = "chat_created"
+	EventChatRemoved    EventType = "chat_removed"
 )
 
 type WSMessage struct {
@@ -65,28 +67,19 @@ type ReplyMessage struct {
 }
 
 type TypingPayload struct {
-	ChatID          string  `json:"chat_id"`
-	UserID          string  `json:"user_id"`
-	Username        string  `json:"username"`
-	ProfileImageURL *string `json:"profile_image_url,omitempty"`
+	ChatID   string `json:"chat_id"`
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
 }
 
-type JoinChatPayload struct {
-	ChatID string `json:"chat_id"`
-}
-
-type LeaveChatPayload struct {
+type ChatEventPayload struct {
 	ChatID string `json:"chat_id"`
 }
 
 type ClientMessage struct {
 	Type    EventType `json:"type"`
 	Payload struct {
-		ChatID           string     `json:"chat_id"`
-		UserID           string     `json:"user_id,omitempty"`
-		Username         string     `json:"username,omitempty"`
-		ProfileImageURL  *string    `json:"profile_image_url,omitempty"`
-		MessageID        string     `json:"message_id,omitempty"`
-		MessageCreatedAt *time.Time `json:"message_created_at,omitempty"`
+		ChatID    string `json:"chat_id"`
+		MessageID string `json:"message_id,omitempty"`
 	} `json:"payload"`
 }

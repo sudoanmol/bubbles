@@ -6,6 +6,7 @@ package database
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -20,7 +21,7 @@ type Querier interface {
 	DeleteImageByUrl(ctx context.Context, url string) error
 	DeleteMessage(ctx context.Context, id uuid.UUID) error
 	DeleteMessageImages(ctx context.Context, arg DeleteMessageImagesParams) error
-	EditMessage(ctx context.Context, arg EditMessageParams) error
+	EditMessage(ctx context.Context, arg EditMessageParams) (time.Time, error)
 	GetChatByIdWithMembers(ctx context.Context, id uuid.UUID) ([]GetChatByIdWithMembersRow, error)
 	GetChatByMembers(ctx context.Context, arg GetChatByMembersParams) (GetChatByMembersRow, error)
 	GetChatDeletionStats(ctx context.Context, chatID uuid.UUID) (GetChatDeletionStatsRow, error)

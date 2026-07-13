@@ -43,12 +43,7 @@ export function Chat({ chatId }: ChatProps) {
   const sendMessageQuery = useServerFn(sendMessageFn)
   const { selectedImages, setSelectedImages, handleFileChange, removeImage, clearImages, uploadImages, isUploading } =
     useImageUpload()
-  const { typingUsers, handleTyping, stopTyping } = useTypingIndicator(
-    chatId,
-    user?.id || '',
-    user?.username || '',
-    user?.profile_image_url
-  )
+  const { typingUsers, handleTyping, stopTyping } = useTypingIndicator(chatId, user?.id || '')
 
   const {
     data: chat,

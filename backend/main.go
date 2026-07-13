@@ -60,7 +60,6 @@ func main() {
 
 	// Initialize WebSocket hub
 	hub := ws.NewHub(dbService)
-	go hub.Run()
 
 	// Initialize upload handler
 	uploadHandler, err := routes.NewUploadHandler()
@@ -85,8 +84,8 @@ func main() {
 	}
 
 	// Initialize chat handler
-	chatHandler := routes.NewChatHandler(dbService)
-	chatActionsHandler := routes.NewChatActionsHandler(dbService, uploadHandler)
+	chatHandler := routes.NewChatHandler(dbService, hub)
+	chatActionsHandler := routes.NewChatActionsHandler(dbService, uploadHandler, hub)
 
 	// Chat routes (with authentication)
 	chat := router.Group("/chat")
@@ -114,7 +113,7 @@ func main() {
 	}
 
 	// Initialize message handler
-	messageHandler := routes.NewMessageHandler(dbService, hub)
+	messageHandler := routes.NewMessageHandler(dbService, hub, uploadHandler)
 
 	// Message routes (with authentication and rate limiting)
 	messages := router.Group("/messages")
@@ -126,15 +125,8 @@ func main() {
 			messages.POST("/send", messageHandler.SendMessage)
 		}
 		messages.POST("/get", messageHandler.GetChatMessages)
-
-		if uploadHandler != nil {
-			messages.POST("/edit", func(c *gin.Context) {
-				messageHandler.EditMessage(c, uploadHandler)
-			})
-			messages.POST("/delete", func(c *gin.Context) {
-				messageHandler.DeleteMessage(c, uploadHandler)
-			})
-		}
+		messages.POST("/edit", messageHandler.EditMessage)
+		messages.POST("/delete", messageHandler.DeleteMessage)
 	}
 
 	// Upload routes (with authentication)
@@ -168,10 +160,10 @@ func main() {
 		defer cancel()
 
 		if err := dbService.DB.PingContext(ctx); err != nil {
+			log.Printf("Health check failed: %v", err)
 			c.JSON(503, gin.H{
 				"status":   "unhealthy",
 				"database": "disconnected",
-				"error":    err.Error(),
 			})
 			return
 		}
@@ -214,6 +206,10 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
+
+	// srv.Shutdown does not touch hijacked connections; close WebSocket
+	// clients explicitly so they get a close frame.
+	hub.Shutdown()
 
 	log.Println("Server exited gracefully")
 }

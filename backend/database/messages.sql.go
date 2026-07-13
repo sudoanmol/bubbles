@@ -100,10 +100,11 @@ func (q *Queries) DeleteMessageImages(ctx context.Context, arg DeleteMessageImag
 	return err
 }
 
-const editMessage = `-- name: EditMessage :exec
+const editMessage = `-- name: EditMessage :one
 UPDATE messages
 SET content = $2, is_edited = true, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
+RETURNING updated_at
 `
 
 type EditMessageParams struct {
@@ -111,9 +112,11 @@ type EditMessageParams struct {
 	Content sql.NullString `json:"content"`
 }
 
-func (q *Queries) EditMessage(ctx context.Context, arg EditMessageParams) error {
-	_, err := q.db.ExecContext(ctx, editMessage, arg.ID, arg.Content)
-	return err
+func (q *Queries) EditMessage(ctx context.Context, arg EditMessageParams) (time.Time, error) {
+	row := q.db.QueryRowContext(ctx, editMessage, arg.ID, arg.Content)
+	var updated_at time.Time
+	err := row.Scan(&updated_at)
+	return updated_at, err
 }
 
 const getChatImageUrls = `-- name: GetChatImageUrls :many

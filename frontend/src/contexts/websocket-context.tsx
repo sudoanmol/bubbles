@@ -1,8 +1,8 @@
 import { getAuthTokenFn } from '@/server/chat'
 import type { ChatInfo } from '@/types/chat'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useServerFn } from '@tanstack/react-start'
-import { createContext, useCallback, useContext, useEffect, useRef } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
 type EventType =
   | 'message_sent'
@@ -13,6 +13,8 @@ type EventType =
   | 'typing_stop'
   | 'join_chat'
   | 'leave_chat'
+  | 'chat_created'
+  | 'chat_removed'
 
 type WSMessage = {
   type: EventType
@@ -22,13 +24,26 @@ type WSMessage = {
 type EventHandler = (payload: any) => void
 
 type WebSocketContextType = {
-  send: (type: EventType, payload: any) => void
+  send: (type: EventType, payload: any) => boolean
   on: (type: EventType, handler: EventHandler) => () => void
   joinChat: (chatId: string) => void
+  leaveChat: (chatId: string) => void
   isConnected: boolean
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null)
+
+const TOKEN_EXPIRY_SKEW = 10_000
+
+function isTokenExpired(token: string) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    if (typeof payload.exp !== 'number') return false
+    return payload.exp * 1000 <= Date.now() + TOKEN_EXPIRY_SKEW
+  } catch {
+    return false
+  }
+}
 
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null)
@@ -36,27 +51,51 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const reconnectAttemptsRef = useRef(0)
   const eventHandlersRef = useRef<Map<EventType, Set<EventHandler>>>(new Map())
   const shouldReconnectRef = useRef(true)
-  const isConnectedRef = useRef(false)
-  const pendingMessagesRef = useRef<Array<{ type: string; payload: any; timestamp?: number }>>([])
+  const pendingReadReceiptsRef = useRef<Array<{ type: EventType; payload: any; timestamp: number }>>([])
   const joinedChatsRef = useRef<Set<string>>(new Set())
+  const [isConnected, setIsConnected] = useState(false)
 
   const queryClient = useQueryClient()
   const getAuthTokenQuery = useServerFn(getAuthTokenFn)
 
-  const { data: token } = useQuery({
-    queryKey: ['authToken'],
-    queryFn: async () => {
-      const result = await getAuthTokenQuery()
-      return result
-    },
-  })
+  const scheduleReconnect = useCallback((connect: () => void, delay: number) => {
+    if (!shouldReconnectRef.current) return
+    reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectAttemptsRef.current++
+      connect()
+    }, delay)
+  }, [])
 
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+  const connect = useCallback(async () => {
+    // A CONNECTING socket counts too, otherwise a re-entrant call leaks a
+    // second socket that keeps processing events.
+    if (
+      wsRef.current &&
+      (wsRef.current.readyState === WebSocket.CONNECTING || wsRef.current.readyState === WebSocket.OPEN)
+    ) {
       return
     }
 
-    if (!token || !shouldReconnectRef.current) {
+    if (!shouldReconnectRef.current) {
+      return
+    }
+
+    // Fetch a fresh token for every attempt; reusing a token captured at
+    // mount makes every reconnect fail once it expires.
+    let token: string | null = null
+    try {
+      token = await queryClient.fetchQuery({
+        queryKey: ['authToken'],
+        queryFn: async () => getAuthTokenQuery(),
+        staleTime: 0,
+      })
+    } catch (error) {
+      console.error('[WebSocket] Failed to fetch auth token:', error)
+    }
+
+    if (!token || isTokenExpired(token)) {
+      console.warn('[WebSocket] No valid auth token, retrying in 60s')
+      scheduleReconnect(connect, 60000)
       return
     }
 
@@ -64,41 +103,28 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
     console.log('[WebSocket] Connecting...')
     const ws = new WebSocket(wsUrl, `Bearer.${token}`)
+    wsRef.current = ws
 
     ws.onopen = () => {
       console.log('[WebSocket] Connected')
       reconnectAttemptsRef.current = 0
-      isConnectedRef.current = true
+      setIsConnected(true)
 
-      // Get chats from TanStack Query cache
+      // Join every chat we know about: the query cache when it has resolved,
+      // otherwise whatever we had joined before this (re)connect.
       const chats = queryClient.getQueryData<ChatInfo[]>(['chats'])
-
-      if (chats) {
-        chats.forEach((chat) => {
-          joinedChatsRef.current.add(chat.id)
-          ws.send(JSON.stringify({ type: 'join_chat', payload: { chat_id: chat.id } }))
-        })
-      } else {
-        // Fallback: re-join previously tracked chats
-        joinedChatsRef.current.forEach((chatId) => {
-          ws.send(JSON.stringify({ type: 'join_chat', payload: { chat_id: chatId } }))
-        })
-      }
-
-      // Send any pending messages, filtering out stale read receipts
-      const MAX_READ_RECEIPT_AGE = 60000 // 1 minute
-      const now = Date.now()
-      const messagesToSend = pendingMessagesRef.current.filter((msg) => {
-        if (msg.type === 'message_read') {
-          return now - (msg.timestamp || 0) < MAX_READ_RECEIPT_AGE
-        }
-        return true
+      chats?.forEach((chat) => joinedChatsRef.current.add(chat.id))
+      joinedChatsRef.current.forEach((chatId) => {
+        ws.send(JSON.stringify({ type: 'join_chat', payload: { chat_id: chatId } }))
       })
 
-      pendingMessagesRef.current = []
-      messagesToSend.forEach((msg) => {
-        const { timestamp, ...msgWithoutTimestamp } = msg
-        ws.send(JSON.stringify(msgWithoutTimestamp))
+      // Flush read receipts queued while offline, dropping stale ones
+      const MAX_READ_RECEIPT_AGE = 60000
+      const now = Date.now()
+      const receipts = pendingReadReceiptsRef.current.filter((msg) => now - msg.timestamp < MAX_READ_RECEIPT_AGE)
+      pendingReadReceiptsRef.current = []
+      receipts.forEach(({ type, payload }) => {
+        ws.send(JSON.stringify({ type, payload }))
       })
     }
 
@@ -120,8 +146,10 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     }
 
     ws.onclose = () => {
-      isConnectedRef.current = false
-      wsRef.current = null
+      setIsConnected(false)
+      if (wsRef.current === ws) {
+        wsRef.current = null
+      }
 
       if (!shouldReconnectRef.current) {
         return
@@ -129,15 +157,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
       const backoffDelay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000)
       console.log(`[WebSocket] Reconnecting in ${backoffDelay}ms...`)
-
-      reconnectTimeoutRef.current = setTimeout(() => {
-        reconnectAttemptsRef.current++
-        connect()
-      }, backoffDelay)
+      scheduleReconnect(connect, backoffDelay)
     }
-
-    wsRef.current = ws
-  }, [token, queryClient])
+  }, [queryClient, getAuthTokenQuery, scheduleReconnect])
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false
@@ -156,13 +178,20 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const send = useCallback((type: EventType, payload: any) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type, payload }))
-    } else {
+      return true
+    }
+
+    // Only read receipts are worth queueing: typing events are stale the
+    // moment the socket drops, and room membership is replayed from
+    // joinedChatsRef on reconnect.
+    if (type === 'message_read') {
       const MAX_PENDING = 50
-      pendingMessagesRef.current.push({ type, payload, timestamp: Date.now() })
-      if (pendingMessagesRef.current.length > MAX_PENDING) {
-        pendingMessagesRef.current = pendingMessagesRef.current.slice(-MAX_PENDING)
+      pendingReadReceiptsRef.current.push({ type, payload, timestamp: Date.now() })
+      if (pendingReadReceiptsRef.current.length > MAX_PENDING) {
+        pendingReadReceiptsRef.current = pendingReadReceiptsRef.current.slice(-MAX_PENDING)
       }
     }
+    return false
   }, [])
 
   const on = useCallback((type: EventType, handler: EventHandler) => {
@@ -190,6 +219,56 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     [send]
   )
 
+  const leaveChat = useCallback(
+    (chatId: string) => {
+      joinedChatsRef.current.delete(chatId)
+      send('leave_chat', { chat_id: chatId })
+    },
+    [send]
+  )
+
+  // Join rooms reactively whenever the chats cache changes, so a socket that
+  // opened before the chats query resolved (or a refetch that found new
+  // chats) still ends up subscribed everywhere.
+  useEffect(() => {
+    const joinKnownChats = () => {
+      const chats = queryClient.getQueryData<ChatInfo[]>(['chats'])
+      chats?.forEach((chat) => {
+        if (!joinedChatsRef.current.has(chat.id)) {
+          joinChat(chat.id)
+        }
+      })
+    }
+
+    joinKnownChats()
+
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.query.queryKey[0] === 'chats') {
+        joinKnownChats()
+      }
+    })
+
+    return unsubscribe
+  }, [queryClient, joinChat])
+
+  useEffect(() => {
+    const unsubscribeCreated = on('chat_created', (payload: { chat_id: string }) => {
+      joinChat(payload.chat_id)
+      queryClient.invalidateQueries({ queryKey: ['chats'] })
+    })
+
+    const unsubscribeRemoved = on('chat_removed', (payload: { chat_id: string }) => {
+      joinedChatsRef.current.delete(payload.chat_id)
+      queryClient.invalidateQueries({ queryKey: ['chats'] })
+      queryClient.invalidateQueries({ queryKey: ['chat', payload.chat_id] })
+    })
+
+    return () => {
+      unsubscribeCreated()
+      unsubscribeRemoved()
+    }
+  }, [on, joinChat, queryClient])
+
   useEffect(() => {
     shouldReconnectRef.current = true
     connect()
@@ -203,7 +282,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     send,
     on,
     joinChat,
-    isConnected: isConnectedRef.current,
+    leaveChat,
+    isConnected,
   }
 
   return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>

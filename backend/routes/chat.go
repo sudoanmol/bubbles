@@ -8,23 +8,33 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 
+	"github.com/anmol7470/bubbles/backend/constants"
 	"github.com/anmol7470/bubbles/backend/database"
 	"github.com/anmol7470/bubbles/backend/models"
 	"github.com/anmol7470/bubbles/backend/utils"
+	ws "github.com/anmol7470/bubbles/backend/websocket"
 )
 
 type ChatHandler struct {
 	dbService *database.Service
+	hub       *ws.Hub
 }
 
-func NewChatHandler(dbService *database.Service) *ChatHandler {
+func NewChatHandler(dbService *database.Service, hub *ws.Hub) *ChatHandler {
 	return &ChatHandler{
 		dbService: dbService,
+		hub:       hub,
 	}
 }
 
 func (h *ChatHandler) SearchUsers(c *gin.Context) {
+	userID, ok := utils.GetUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
 	var req models.SearchUsersRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
@@ -36,9 +46,13 @@ func (h *ChatHandler) SearchUsers(c *gin.Context) {
 	// Escape ILIKE special characters to prevent pattern injection
 	escapedQuery := utils.EscapeLikePattern(req.Query)
 
+	// Always exclude the requester server-side; a nil array would make
+	// `id != ALL(NULL)` match nothing.
+	excludedIds := append([]uuid.UUID{userID}, req.SelectedUserIds...)
+
 	users, err := h.dbService.Queries.SearchUsers(c.Request.Context(), database.SearchUsersParams{
 		Query:       sql.NullString{String: escapedQuery, Valid: true},
-		ExcludedIds: req.SelectedUserIds,
+		ExcludedIds: excludedIds,
 	})
 
 	if err != nil {
@@ -53,7 +67,6 @@ func (h *ChatHandler) SearchUsers(c *gin.Context) {
 		result[i] = models.SearchUsersResponse{
 			ID:              user.ID,
 			Username:        user.Username,
-			Email:           user.Email,
 			ProfileImageURL: utils.NullableString(user.ProfileImageUrl),
 		}
 	}
@@ -93,26 +106,27 @@ func (h *ChatHandler) CreateChat(c *gin.Context) {
 		return
 	}
 
+	if len(memberIds) > constants.MaxChatMembers {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "A chat can have at most 50 members",
+		})
+		return
+	}
+
+	// Sort member IDs for consistent chat lookup
 	sort.Slice(memberIds, func(i, j int) bool {
 		return memberIds[i].String() < memberIds[j].String()
 	})
 
 	isGroup := len(memberIds) > 2
 
-	// Sort member IDs for consistent chat lookup
-	sortedMemberIds := make([]uuid.UUID, len(memberIds))
-	copy(sortedMemberIds, memberIds)
-	sort.Slice(sortedMemberIds, func(i, j int) bool {
-		return sortedMemberIds[i].String() < sortedMemberIds[j].String()
-	})
-
 	var chatID uuid.UUID
 	var existing bool
 
 	if !isGroup {
 		existingChat, err := h.dbService.Queries.GetChatByMembers(c.Request.Context(), database.GetChatByMembersParams{
-			MemberIds:   sortedMemberIds,
-			MemberCount: int64(len(sortedMemberIds)),
+			MemberIds:   memberIds,
+			MemberCount: int64(len(memberIds)),
 		})
 
 		if err == nil {
@@ -166,6 +180,13 @@ func (h *ChatHandler) CreateChat(c *gin.Context) {
 			})
 
 			if err != nil {
+				// 23503 = foreign_key_violation: the member ID does not exist
+				if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
+					c.JSON(http.StatusBadRequest, models.ErrorResponse{
+						Error: "One or more selected users do not exist",
+					})
+					return
+				}
 				c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 					Error: "Failed to add chat member",
 				})
@@ -179,6 +200,8 @@ func (h *ChatHandler) CreateChat(c *gin.Context) {
 			})
 			return
 		}
+
+		h.hub.NotifyChatCreated(chatID.String(), memberIds)
 	}
 
 	c.JSON(http.StatusOK, models.CreateChatResponse{
@@ -267,7 +290,6 @@ func (h *ChatHandler) GetUserChats(c *gin.Context) {
 		chatsMap[row.ChatID].Members = append(chatsMap[row.ChatID].Members, models.ChatMember{
 			ID:              row.MemberID,
 			Username:        row.MemberUsername,
-			Email:           row.MemberEmail,
 			ProfileImageURL: utils.NullableString(row.MemberProfileImageUrl),
 		})
 	}
@@ -356,7 +378,6 @@ func (h *ChatHandler) GetChatById(c *gin.Context) {
 		membersMap[member.MemberID] = models.ChatMember{
 			ID:              member.MemberID,
 			Username:        member.MemberUsername,
-			Email:           member.MemberEmail,
 			ProfileImageURL: utils.NullableString(member.MemberProfileImageUrl),
 		}
 	}
