@@ -109,7 +109,8 @@ bubbles/
 │   │   │                      #   code that talks to the Go API directly
 │   │   └── types/             # Shared TypeScript types
 │   ├── server.ts              # Production server (Bun): statics + SSR handler
-│   ├── railway.json           # Railway build/deploy config
+│   ├── railway.json           # Railway deploy config (Dockerfile builder)
+│   ├── Dockerfile             # Production image (multi-stage Bun build)
 │   └── vite.config.ts
 │
 ├── backend/                   # Go API + WebSocket server
@@ -123,6 +124,7 @@ bubbles/
 │   ├── models/                # Request/response types
 │   ├── utils/                 # Helpers, security logger
 │   ├── docker-compose.yml     # Local PostgreSQL + Redis
+│   ├── Dockerfile             # Production image (multi-stage Go build)
 │   └── Makefile               # All backend commands
 │
 ├── mprocs.yaml                # Runs both dev servers
@@ -266,11 +268,11 @@ The typical loop for schema changes: add a migration in `backend/sql/schema/`, u
 
 ## Deployment
 
-Both apps run as services in one Railway project, alongside managed PostgreSQL and Redis.
+Both apps run as services in one Railway project, alongside managed PostgreSQL and Redis. Each service is connected to this GitHub repo and auto-deploys on every push to `main`: the backend service's root directory is `backend/`, the frontend's is `frontend/`, and each builds from its own `Dockerfile`.
 
 ### Frontend
 
-Configured by `frontend/railway.json`: Railway builds with `bun install && bun run build` and starts `bun run start`, which runs `server.ts` — a small Bun server that serves `dist/client` static assets (immutable caching for hashed files) and hands everything else to the TanStack Start SSR handler. Point the service's root directory at `frontend/`.
+The multi-stage `frontend/Dockerfile` runs `bun run build` (the `VITE_*` variables are passed as build args and baked into the bundle) and ships a slim image that runs `server.ts` — a small Bun server that serves `dist/client` static assets (immutable caching for hashed files) and hands everything else to the TanStack Start SSR handler. `frontend/railway.json` selects the Dockerfile builder and sets the health check path (`/auth`).
 
 Set these service variables (the `VITE_*` values are baked in at build time, so trigger a redeploy after changing them):
 
@@ -282,7 +284,7 @@ Set these service variables (the `VITE_*` values are baked in at build time, so 
 
 ### Backend
 
-The backend is a single Go binary; point a service at `backend/`, attach PostgreSQL and Redis, and set the environment variables above (`FRONTEND_URL` must be the frontend service's public URL, with `https://`). Run migrations against the production database:
+The multi-stage `backend/Dockerfile` compiles a static Go binary into a small Alpine image. Attach PostgreSQL and Redis, and set the environment variables above (`FRONTEND_URL` must be the frontend service's public URL, with `https://`). Run migrations against the production database:
 
 ```bash
 cd backend
