@@ -2,7 +2,7 @@ import { redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import type { AuthResponse, ErrorResponse, SignInData, SignUpData, VerifyResponse } from '../types/auth'
 import { useAppSession } from './session'
-import { BACKEND_URL } from './utils'
+import { BACKEND_URL, getValidToken } from './utils'
 
 export const signUpFn = createServerFn({ method: 'POST' })
   .inputValidator((data: SignUpData) => data)
@@ -23,10 +23,11 @@ export const signUpFn = createServerFn({ method: 'POST' })
 
       const authResponse: AuthResponse = await response.json()
 
-      // Store token and user in session
+      // Store tokens and user in session
       const session = await useAppSession()
       await session.update({
         token: authResponse.token,
+        refreshToken: authResponse.refresh_token,
         user: authResponse.user,
       })
 
@@ -58,10 +59,11 @@ export const signInFn = createServerFn({ method: 'POST' })
 
       const authResponse: AuthResponse = await response.json()
 
-      // Store token and user in session
+      // Store tokens and user in session
       const session = await useAppSession()
       await session.update({
         token: authResponse.token,
+        refreshToken: authResponse.refresh_token,
         user: authResponse.user,
       })
 
@@ -77,7 +79,7 @@ export const signInFn = createServerFn({ method: 'POST' })
 // Verify Token and Get Current User
 export const getCurrentUserFn = createServerFn({ method: 'GET' }).handler(async () => {
   const session = await useAppSession()
-  const token = session.data.token
+  const token = await getValidToken(session)
 
   if (!token) {
     return null
@@ -109,6 +111,20 @@ export const getCurrentUserFn = createServerFn({ method: 'GET' }).handler(async 
 
 export const logoutFn = createServerFn({ method: 'POST' }).handler(async () => {
   const session = await useAppSession()
+
+  const refreshToken = session.data.refreshToken
+  if (refreshToken) {
+    try {
+      await fetch(`${BACKEND_URL}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      })
+    } catch {
+      // Session is cleared regardless; the token expires server-side.
+    }
+  }
+
   await session.clear()
   throw redirect({ to: '/auth' })
 })

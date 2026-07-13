@@ -15,6 +15,7 @@ import (
 
 type RateLimiter struct {
 	authLimiter    *limiter.Limiter
+	refreshLimiter *limiter.Limiter
 	searchLimiter  *limiter.Limiter
 	messageLimiter *limiter.Limiter
 	uploadLimiter  *limiter.Limiter
@@ -50,6 +51,14 @@ func NewRateLimiter() (*RateLimiter, error) {
 		Limit:  5,
 	})
 
+	// Refresh is called by every active session roughly once per token
+	// lifetime, so it needs far more headroom than login, especially for
+	// users behind a shared IP.
+	refreshLimiter := limiter.New(store, limiter.Rate{
+		Period: 10 * time.Minute,
+		Limit:  60,
+	})
+
 	searchLimiter := limiter.New(store, limiter.Rate{
 		Period: 1 * time.Minute,
 		Limit:  30,
@@ -67,6 +76,7 @@ func NewRateLimiter() (*RateLimiter, error) {
 
 	return &RateLimiter{
 		authLimiter:    authLimiter,
+		refreshLimiter: refreshLimiter,
 		searchLimiter:  searchLimiter,
 		messageLimiter: messageLimiter,
 		uploadLimiter:  uploadLimiter,
@@ -75,6 +85,10 @@ func NewRateLimiter() (*RateLimiter, error) {
 
 func (rl *RateLimiter) AuthLimit() gin.HandlerFunc {
 	return rl.createIPBasedMiddleware(rl.authLimiter)
+}
+
+func (rl *RateLimiter) RefreshLimit() gin.HandlerFunc {
+	return rl.createIPBasedMiddleware(rl.refreshLimiter)
 }
 
 func (rl *RateLimiter) SearchLimit() gin.HandlerFunc {

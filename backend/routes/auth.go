@@ -1,7 +1,12 @@
 package routes
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -64,6 +69,43 @@ func GenerateJWT(userID uuid.UUID, username, email string) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
+}
+
+const refreshTokenBytes = 32
+
+func hashRefreshToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func refreshTokenExpiry() time.Time {
+	days := 30
+	if expiryEnv := os.Getenv("REFRESH_TOKEN_EXPIRY_DAYS"); expiryEnv != "" {
+		if d, err := strconv.Atoi(expiryEnv); err == nil && d > 0 {
+			days = d
+		}
+	}
+	return time.Now().Add(time.Duration(days) * 24 * time.Hour)
+}
+
+// issueRefreshToken mints an opaque token, stores only its hash, and returns
+// the plaintext token for the client.
+func issueRefreshToken(ctx context.Context, queries *database.Queries, userID uuid.UUID) (string, error) {
+	buf := make([]byte, refreshTokenBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+
+	if err := queries.CreateRefreshToken(ctx, database.CreateRefreshTokenParams{
+		UserID:    userID,
+		TokenHash: hashRefreshToken(token),
+		ExpiresAt: refreshTokenExpiry(),
+	}); err != nil {
+		return "", err
+	}
+
+	return token, nil
 }
 
 func ValidateJWT(tokenString string) (*JWTClaims, error) {
@@ -159,6 +201,14 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		return
 	}
 
+	refreshToken, err := issueRefreshToken(c.Request.Context(), h.dbService.Queries, user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to generate token",
+		})
+		return
+	}
+
 	// Log successful account creation
 	utils.SecurityLogger.Info("User account created",
 		"user_id", user.ID.String(),
@@ -168,7 +218,8 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusCreated, models.AuthResponse{
-		Token: token,
+		Token:        token,
+		RefreshToken: refreshToken,
 		User: models.UserInfo{
 			ID:              user.ID,
 			Username:        user.Username,
@@ -242,6 +293,14 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 		return
 	}
 
+	refreshToken, err := issueRefreshToken(c.Request.Context(), h.dbService.Queries, user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to generate token",
+		})
+		return
+	}
+
 	// Log successful login
 	utils.SecurityLogger.Info("User logged in",
 		"user_id", user.ID.String(),
@@ -250,7 +309,8 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusOK, models.AuthResponse{
-		Token: token,
+		Token:        token,
+		RefreshToken: refreshToken,
 		User: models.UserInfo{
 			ID:              user.ID,
 			Username:        user.Username,
@@ -258,6 +318,119 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 			ProfileImageURL: utils.NullableString(user.ProfileImageUrl),
 			CreatedAt:       user.CreatedAt,
 		},
+	})
+}
+
+// Refresh exchanges a valid refresh token for a new JWT and a rotated
+// refresh token. The presented token is single-use: it is deleted in the
+// same transaction that creates its replacement.
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	var req models.RefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Refresh token is required",
+		})
+		return
+	}
+
+	tokenHash := hashRefreshToken(req.RefreshToken)
+
+	stored, err := h.dbService.Queries.GetRefreshTokenByHash(c.Request.Context(), tokenHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+				Error: "Invalid refresh token",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to verify refresh token",
+		})
+		return
+	}
+
+	if time.Now().After(stored.ExpiresAt) {
+		_ = h.dbService.Queries.DeleteRefreshToken(c.Request.Context(), tokenHash)
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: "Refresh token expired",
+		})
+		return
+	}
+
+	user, err := h.dbService.Queries.GetUserByID(c.Request.Context(), stored.UserID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: "Invalid refresh token",
+		})
+		return
+	}
+
+	tx, err := h.dbService.DB.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to rotate refresh token",
+		})
+		return
+	}
+	defer tx.Rollback()
+
+	qtx := h.dbService.Queries.WithTx(tx)
+
+	if err := qtx.DeleteRefreshToken(c.Request.Context(), tokenHash); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to rotate refresh token",
+		})
+		return
+	}
+
+	newRefreshToken, err := issueRefreshToken(c.Request.Context(), qtx, user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to rotate refresh token",
+		})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to rotate refresh token",
+		})
+		return
+	}
+
+	token, err := GenerateJWT(user.ID, user.Username, user.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to generate token",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.AuthResponse{
+		Token:        token,
+		RefreshToken: newRefreshToken,
+		User: models.UserInfo{
+			ID:              user.ID,
+			Username:        user.Username,
+			Email:           user.Email,
+			ProfileImageURL: utils.NullableString(user.ProfileImageUrl),
+			CreatedAt:       user.CreatedAt,
+		},
+	})
+}
+
+// Logout revokes the presented refresh token. It always reports success so
+// clients can clear their session regardless.
+func (h *AuthHandler) Logout(c *gin.Context) {
+	var req models.RefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+		if err := h.dbService.Queries.DeleteRefreshToken(c.Request.Context(), hashRefreshToken(req.RefreshToken)); err != nil {
+			utils.SecurityLogger.Warn("Failed to revoke refresh token", "error", err.Error())
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
 	})
 }
 

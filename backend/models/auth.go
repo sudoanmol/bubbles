@@ -23,8 +23,13 @@ type VerifyResponse struct {
 }
 
 type AuthResponse struct {
-	Token string   `json:"token"`
-	User  UserInfo `json:"user"`
+	Token        string   `json:"token"`
+	RefreshToken string   `json:"refresh_token"`
+	User         UserInfo `json:"user"`
+}
+
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
 type UserInfo struct {

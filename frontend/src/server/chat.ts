@@ -16,11 +16,11 @@ import type {
   SendMessageRequest,
 } from '../types/chat'
 import { useAppSession } from './session'
-import { authenticatedFetch } from './utils'
+import { authenticatedFetch, getValidToken } from './utils'
 
 export const getAuthTokenFn = createServerFn({ method: 'GET' }).handler(async () => {
   const session = await useAppSession()
-  return session.data.token || null
+  return getValidToken(session)
 })
 
 export const searchUsersFn = createServerFn({ method: 'POST' })

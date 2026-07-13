@@ -8,6 +8,7 @@ export type User = {
 
 export type AuthResponse = {
   token: string
+  refresh_token: string
   user: User
 }
 
@@ -34,5 +35,6 @@ export type SignInData = {
 
 export type SessionData = {
   token?: string
+  refreshToken?: string
   user?: User
 }

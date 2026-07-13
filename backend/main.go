@@ -61,6 +61,21 @@ func main() {
 	// Initialize WebSocket hub
 	hub := ws.NewHub(dbService)
 
+	// Periodically purge expired refresh tokens
+	go func() {
+		cleanup := func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := dbService.Queries.DeleteExpiredRefreshTokens(ctx); err != nil {
+				log.Printf("Failed to delete expired refresh tokens: %v", err)
+			}
+		}
+		cleanup()
+		for range time.Tick(24 * time.Hour) {
+			cleanup()
+		}
+	}()
+
 	// Initialize upload handler
 	uploadHandler, err := routes.NewUploadHandler()
 	if err != nil {
@@ -76,10 +91,13 @@ func main() {
 		if rateLimiter != nil {
 			auth.POST("/signup", rateLimiter.AuthLimit(), authHandler.SignUp)
 			auth.POST("/signin", rateLimiter.AuthLimit(), authHandler.SignIn)
+			auth.POST("/refresh", rateLimiter.RefreshLimit(), authHandler.Refresh)
 		} else {
 			auth.POST("/signup", authHandler.SignUp)
 			auth.POST("/signin", authHandler.SignIn)
+			auth.POST("/refresh", authHandler.Refresh)
 		}
+		auth.POST("/logout", authHandler.Logout)
 		auth.GET("/verify", middleware.AuthMiddleware(), authHandler.Verify)
 	}
 

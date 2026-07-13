@@ -16,11 +16,14 @@ type Querier interface {
 	AddMessageImage(ctx context.Context, arg AddMessageImageParams) error
 	CreateChat(ctx context.Context, arg CreateChatParams) (Chat, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
+	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteChat(ctx context.Context, id uuid.UUID) error
+	DeleteExpiredRefreshTokens(ctx context.Context) error
 	DeleteImageByUrl(ctx context.Context, url string) error
 	DeleteMessage(ctx context.Context, id uuid.UUID) error
 	DeleteMessageImages(ctx context.Context, arg DeleteMessageImagesParams) error
+	DeleteRefreshToken(ctx context.Context, tokenHash string) error
 	EditMessage(ctx context.Context, arg EditMessageParams) (time.Time, error)
 	GetChatByIdWithMembers(ctx context.Context, id uuid.UUID) ([]GetChatByIdWithMembersRow, error)
 	GetChatByMembers(ctx context.Context, arg GetChatByMembersParams) (GetChatByMembersRow, error)
@@ -35,6 +38,7 @@ type Querier interface {
 	GetMessageImages(ctx context.Context, dollar_1 []uuid.UUID) ([]Image, error)
 	GetMessagesByChat(ctx context.Context, chatID uuid.UUID) ([]GetMessagesByChatRow, error)
 	GetMessagesByChatPaginated(ctx context.Context, arg GetMessagesByChatPaginatedParams) ([]GetMessagesByChatPaginatedRow, error)
+	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
