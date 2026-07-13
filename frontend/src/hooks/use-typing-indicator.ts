@@ -10,11 +10,15 @@ export type TypingUser = {
 // If the typist's typing_stop never arrives (dropped connection, closed tab),
 // the indicator expires on its own instead of sticking forever.
 const TYPING_EXPIRY_MS = 5000
+// While typing continues, re-send typing_start on this interval so receivers'
+// expiry timers keep getting refreshed. Must be < TYPING_EXPIRY_MS.
+const TYPING_REFRESH_MS = 3000
 
 export function useTypingIndicator(chatId: string, currentUserId: string) {
   const [typingUsers, setTypingUsers] = useState<Map<string, TypingUser>>(new Map())
   const { send, on } = useWebSocket()
   const isTypingRef = useRef(false)
+  const lastStartSentAtRef = useRef(0)
   const expiryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const removeTypingUser = useCallback((userId: string) => {
@@ -32,9 +36,11 @@ export function useTypingIndicator(chatId: string, currentUserId: string) {
   }, [])
 
   const sendTypingStart = useCallback(() => {
-    if (!isTypingRef.current) {
+    const now = Date.now()
+    if (!isTypingRef.current || now - lastStartSentAtRef.current >= TYPING_REFRESH_MS) {
       if (send('typing_start', { chat_id: chatId })) {
         isTypingRef.current = true
+        lastStartSentAtRef.current = now
       }
     }
   }, [send, chatId])
@@ -72,6 +78,8 @@ export function useTypingIndicator(chatId: string, currentUserId: string) {
       )
 
       setTypingUsers((prev) => {
+        const existing = prev.get(payload.user_id)
+        if (existing && existing.username === payload.username) return prev
         const next = new Map(prev)
         next.set(payload.user_id, {
           user_id: payload.user_id,
