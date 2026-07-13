@@ -373,9 +373,9 @@ LEFT JOIN users ru ON rm.sender_id = ru.id
 WHERE m.chat_id = $2::uuid
   AND (cm_filter.cleared_at IS NULL OR m.created_at > cm_filter.cleared_at)
   AND (
-    $3::timestamp IS NULL OR
-    m.created_at < $3::timestamp OR
-    (m.created_at = $3::timestamp AND m.id < $4::uuid)
+    $3::timestamptz IS NULL OR
+    m.created_at < $3::timestamptz OR
+    (m.created_at = $3::timestamptz AND m.id < $4::uuid)
   )
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT $5

@@ -44,6 +44,7 @@ type Querier interface {
 	GetUserByUsername(ctx context.Context, username string) (User, error)
 	IsChatMember(ctx context.Context, arg IsChatMemberParams) (bool, error)
 	RemoveChatMember(ctx context.Context, arg RemoveChatMemberParams) error
+	RevokeRefreshToken(ctx context.Context, tokenHash string) error
 	SearchUsers(ctx context.Context, arg SearchUsersParams) ([]SearchUsersRow, error)
 	UpdateChatCreator(ctx context.Context, arg UpdateChatCreatorParams) error
 	UpdateChatMemberClearedAt(ctx context.Context, arg UpdateChatMemberClearedAtParams) error

@@ -321,9 +321,15 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 	})
 }
 
+// refreshRotationGrace is how long a rotated refresh token remains
+// exchangeable. Concurrent requests from one client (page load firing
+// several server functions at once) can each present the same token; without
+// a grace window the losers would be treated as token theft and logged out.
+const refreshRotationGrace = 30 * time.Second
+
 // Refresh exchanges a valid refresh token for a new JWT and a rotated
-// refresh token. The presented token is single-use: it is deleted in the
-// same transaction that creates its replacement.
+// refresh token. Rotated tokens stay usable for a short grace window, then
+// are rejected.
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req models.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -357,10 +363,23 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	user, err := h.dbService.Queries.GetUserByID(c.Request.Context(), stored.UserID)
-	if err != nil {
+	if stored.RevokedAt.Valid && time.Since(stored.RevokedAt.Time) > refreshRotationGrace {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
 			Error: "Invalid refresh token",
+		})
+		return
+	}
+
+	user, err := h.dbService.Queries.GetUserByID(c.Request.Context(), stored.UserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+				Error: "Invalid refresh token",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to verify refresh token",
 		})
 		return
 	}
@@ -376,7 +395,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	qtx := h.dbService.Queries.WithTx(tx)
 
-	if err := qtx.DeleteRefreshToken(c.Request.Context(), tokenHash); err != nil {
+	// Mark rather than delete so the grace window above works; the daily
+	// cleanup removes revoked rows for good.
+	if err := qtx.RevokeRefreshToken(c.Request.Context(), tokenHash); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error: "Failed to rotate refresh token",
 		})

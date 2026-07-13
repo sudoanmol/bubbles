@@ -20,8 +20,6 @@ export function NewChatDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const searchUsersQuery = useServerFn(searchUsersFn)
   const createChatMutation = useServerFn(createChatFn)
 
-  if (!user) return null
-
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [selectedUsers, setSelectedUsers] = useState<{ id: string; username: string }[]>([])
@@ -33,7 +31,7 @@ export function NewChatDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const { data, isLoading: isSearching } = useQuery({
     queryKey: ['searchUsers', debouncedQuery, selectedUsers.map((u) => u.id)],
     queryFn: async () => {
-      if (!debouncedQuery) return []
+      if (!debouncedQuery || !user) return []
       const result = await searchUsersQuery({
         data: {
           query: debouncedQuery,
@@ -91,6 +89,9 @@ export function NewChatDialog({ open, onOpenChange }: { open: boolean; onOpenCha
       toast.error(error instanceof Error ? error.message : 'Failed to create chat')
     },
   })
+
+  // After all hooks so the hook order is stable across renders
+  if (!user) return null
 
   const handleStartNewChat = async () => {
     if (selectedUsers.length >= 2 && !showGroupNameInput) {

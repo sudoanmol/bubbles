@@ -56,10 +56,6 @@ export function ChatsList() {
   const chatId = 'chatId' in params ? params.chatId : null
   const { user } = useRouteContext({ from: '__root__' })
 
-  if (!user) {
-    return null
-  }
-
   const logoutMutation = useServerFn(logoutFn)
   const getUserChatsQuery = useServerFn(getUserChatsFn)
 
@@ -127,6 +123,11 @@ export function ChatsList() {
     }
     const otherParticipant = getOtherParticipant(chat)
     return otherParticipant?.username || 'Unknown'
+  }
+
+  // After all hooks so the hook order is stable across renders
+  if (!user) {
+    return null
   }
 
   const displayLastMessage = (chat: ChatInfo, currentUserId: string) => {

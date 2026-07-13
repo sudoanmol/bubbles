@@ -18,6 +18,11 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// Non-browser clients send no Origin; the check only defends
+			// against cross-site requests from browsers, which always do.
+			return true
+		}
 		allowedOrigin := os.Getenv("FRONTEND_URL")
 		if allowedOrigin == "" {
 			allowedOrigin = "http://localhost:3000"

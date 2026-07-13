@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -112,14 +113,14 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 
 	// Detect content type
 	buffer := make([]byte, 512)
-	_, err = file.Read(buffer)
-	if err != nil {
+	n, err := file.Read(buffer)
+	if err != nil && err != io.EOF {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error: "Failed to read file",
 		})
 		return
 	}
-	contentType := http.DetectContentType(buffer)
+	contentType := http.DetectContentType(buffer[:n])
 
 	// Validate content type
 	if !allowedImageTypes[contentType] {
@@ -174,8 +175,9 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 	})
 
 	if err != nil {
+		log.Printf("Failed to upload image to storage: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error: fmt.Sprintf("Failed to upload image: %v", err),
+			Error: "Failed to upload image",
 		})
 		return
 	}

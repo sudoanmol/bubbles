@@ -1,6 +1,6 @@
 import { getAuthTokenFn } from '@/server/chat'
 import { useServerFn } from '@tanstack/react-start'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export type ImagePreview = {
@@ -24,10 +24,13 @@ export function useImageUpload(options: UseImageUploadOptions = {}) {
   const getAuthToken = useServerFn(getAuthTokenFn)
   const { maxImages = 5, replaceExisting = false } = options
 
-  // Cleanup Object URLs on component unmount to prevent memory leaks
+  // Cleanup Object URLs on component unmount to prevent memory leaks; the
+  // ref avoids a stale closure over the initial (empty) selection.
+  const selectedImagesRef = useRef<ImagePreview[]>(selectedImages)
+  selectedImagesRef.current = selectedImages
   useEffect(() => {
     return () => {
-      selectedImages.forEach((img) => URL.revokeObjectURL(img.previewUrl))
+      selectedImagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl))
     }
   }, [])
 

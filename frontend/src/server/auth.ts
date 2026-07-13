@@ -103,8 +103,8 @@ export const getCurrentUserFn = createServerFn({ method: 'GET' }).handler(async 
 
     return verifyResponse.user
   } catch (error) {
-    // If verification fails, clear session
-    await session.clear()
+    // Network error reaching the backend: keep the session so a transient
+    // outage doesn't log the user out permanently.
     return null
   }
 })

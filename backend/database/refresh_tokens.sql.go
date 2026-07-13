@@ -31,6 +31,7 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 const deleteExpiredRefreshTokens = `-- name: DeleteExpiredRefreshTokens :exec
 DELETE FROM refresh_tokens
 WHERE expires_at < CURRENT_TIMESTAMP
+   OR revoked_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'
 `
 
 func (q *Queries) DeleteExpiredRefreshTokens(ctx context.Context) error {
@@ -49,7 +50,7 @@ func (q *Queries) DeleteRefreshToken(ctx context.Context, tokenHash string) erro
 }
 
 const getRefreshTokenByHash = `-- name: GetRefreshTokenByHash :one
-SELECT id, user_id, token_hash, expires_at, created_at
+SELECT id, user_id, token_hash, expires_at, revoked_at, created_at
 FROM refresh_tokens
 WHERE token_hash = $1
 `
@@ -62,7 +63,19 @@ func (q *Queries) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (
 		&i.UserID,
 		&i.TokenHash,
 		&i.ExpiresAt,
+		&i.RevokedAt,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
+UPDATE refresh_tokens
+SET revoked_at = CURRENT_TIMESTAMP
+WHERE token_hash = $1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
+	_, err := q.db.ExecContext(ctx, revokeRefreshToken, tokenHash)
+	return err
 }

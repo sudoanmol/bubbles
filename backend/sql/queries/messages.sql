@@ -59,9 +59,9 @@ LEFT JOIN users ru ON rm.sender_id = ru.id
 WHERE m.chat_id = sqlc.arg(chat_id)::uuid
   AND (cm_filter.cleared_at IS NULL OR m.created_at > cm_filter.cleared_at)
   AND (
-    sqlc.narg(cursor_time)::timestamp IS NULL OR
-    m.created_at < sqlc.narg(cursor_time)::timestamp OR
-    (m.created_at = sqlc.narg(cursor_time)::timestamp AND m.id < sqlc.narg(cursor_id)::uuid)
+    sqlc.narg(cursor_time)::timestamptz IS NULL OR
+    m.created_at < sqlc.narg(cursor_time)::timestamptz OR
+    (m.created_at = sqlc.narg(cursor_time)::timestamptz AND m.id < sqlc.narg(cursor_id)::uuid)
   )
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT sqlc.arg(page_limit);

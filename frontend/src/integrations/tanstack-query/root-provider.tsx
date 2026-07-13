@@ -1,13 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 export function getContext() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      mutations: {
-        retry: 3,
-      },
-    },
-  })
+  // No mutation retries: mutations like send-message are not idempotent, and
+  // a retry after a lost response duplicates the action.
+  const queryClient = new QueryClient()
   return {
     queryClient,
   }
