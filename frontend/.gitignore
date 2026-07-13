@@ -8,7 +8,6 @@ count.txt
 !.env.example
 .nitro
 .tanstack
-.wrangler
 .output
 .vinxi
 todos.json

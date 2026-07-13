@@ -23,8 +23,8 @@ A real-time chat application with direct messages and group chats, built with Ta
 - [TanStack Query](https://tanstack.com/query) for data fetching, caching, and optimistic updates
 - [TanStack Form](https://tanstack.com/form) + [Zod](https://zod.dev) for forms and validation
 - [Tailwind CSS](https://tailwindcss.com) + [shadcn/ui](https://ui.shadcn.com) for styling and components
-- [Bun](https://bun.sh) as package manager and script runner
-- Deployed to [Cloudflare Workers](https://workers.cloudflare.com) via Wrangler
+- [Bun](https://bun.sh) as package manager, script runner, and production server
+- Deployed to [Railway](https://railway.app)
 
 ### Backend
 
@@ -35,6 +35,8 @@ A real-time chat application with direct messages and group chats, built with Ta
 - [Cloudflare R2](https://www.cloudflare.com/developer-platform/r2/) (S3-compatible) for image storage
 - [air](https://github.com/air-verse/air) for live reloading, [Docker](https://www.docker.com) for local databases
 - Deployed to [Railway](https://railway.app)
+
+Both apps deploy to the same Railway project.
 
 ## Prerequisites
 
@@ -97,7 +99,7 @@ This uses [mprocs](https://github.com/pvolok/mprocs) to run the frontend (port 3
 
 ```
 bubbles/
-├── frontend/                  # TanStack Start app (deployed to Cloudflare Workers)
+├── frontend/                  # TanStack Start app
 │   ├── src/
 │   │   ├── components/        # UI components (chat, messages, dialogs, shadcn/ui)
 │   │   ├── contexts/          # WebSocket provider (connection, rooms, event bus)
@@ -106,7 +108,8 @@ bubbles/
 │   │   ├── server/            # Server functions (auth, chat, session) — the only
 │   │   │                      #   code that talks to the Go API directly
 │   │   └── types/             # Shared TypeScript types
-│   ├── wrangler.jsonc         # Cloudflare Workers deployment config
+│   ├── server.ts              # Production server (Bun): statics + SSR handler
+│   ├── railway.json           # Railway build/deploy config
 │   └── vite.config.ts
 │
 ├── backend/                   # Go API + WebSocket server
@@ -131,7 +134,7 @@ bubbles/
 The browser never calls the Go API directly. Every HTTP request goes through a TanStack Start **server function**, which reads the JWT from an encrypted, http-only session cookie and forwards the request with a `Bearer` token:
 
 ```
-Browser → server function (Workers/Node) → Go API → PostgreSQL
+Browser → server function (Bun/Node) → Go API → PostgreSQL
                    │
                    └── session cookie holds { token, refreshToken, user }
 ```
@@ -235,14 +238,13 @@ If Redis is unavailable, limits fail open (requests proceed, errors are logged) 
 
 ### Frontend (`frontend/`)
 
-| Command              | Description                            |
-| -------------------- | -------------------------------------- |
-| `bun run dev`        | Vite dev server on port 3000           |
-| `bun run build`      | Production build                       |
-| `bun run typecheck`  | `tsc --noEmit`                         |
-| `bun run test`       | Vitest                                 |
-| `bun run deploy`     | Build and deploy to Cloudflare Workers |
-| `bun run cf-typegen` | Generate Workers types                 |
+| Command             | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `bun run dev`       | Vite dev server on port 3000                     |
+| `bun run build`     | Production build (`dist/client` + `dist/server`) |
+| `bun run start`     | Serve the production build (`server.ts`)         |
+| `bun run typecheck` | `tsc --noEmit`                                   |
+| `bun run test`      | Vitest                                           |
 
 ### Backend (`backend/`) — via Makefile
 
@@ -264,19 +266,23 @@ The typical loop for schema changes: add a migration in `backend/sql/schema/`, u
 
 ## Deployment
 
-### Frontend — Cloudflare Workers
+Both apps run as services in one Railway project, alongside managed PostgreSQL and Redis.
 
-Configured in `frontend/wrangler.jsonc`. Production values for `VITE_BACKEND_URL` / `VITE_WS_URL` live in the `vars` block; set `SESSION_SECRET` as a Workers secret:
+### Frontend
 
-```bash
-cd frontend
-bunx wrangler secret put SESSION_SECRET
-bun run deploy
-```
+Configured by `frontend/railway.json`: Railway builds with `bun install && bun run build` and starts `bun run start`, which runs `server.ts` — a small Bun server that serves `dist/client` static assets (immutable caching for hashed files) and hands everything else to the TanStack Start SSR handler. Point the service's root directory at `frontend/`.
 
-### Backend — Railway (or any container host)
+Set these service variables (the `VITE_*` values are baked in at build time, so trigger a redeploy after changing them):
 
-The backend is a single Go binary. On Railway, point a service at `backend/`, attach PostgreSQL and Redis, and set the environment variables above (`FRONTEND_URL` must be the Workers URL, with `https://`). Run migrations against the production database:
+| Variable           | Value                                 |
+| ------------------ | ------------------------------------- |
+| `VITE_BACKEND_URL` | The backend service's public URL      |
+| `VITE_WS_URL`      | Same URL with `wss://` and `/ws` path |
+| `SESSION_SECRET`   | Long random string                    |
+
+### Backend
+
+The backend is a single Go binary; point a service at `backend/`, attach PostgreSQL and Redis, and set the environment variables above (`FRONTEND_URL` must be the frontend service's public URL, with `https://`). Run migrations against the production database:
 
 ```bash
 cd backend
