@@ -13,10 +13,10 @@
   },
   "dependencies": {
     "husky": "^9.1.7",
-    "lint-staged": "^16.2.7",
-    "mprocs": "^0.7.3",
-    "prettier": "^3.6.2",
+    "lint-staged": "^17.0.8",
+    "mprocs": "^0.9.6",
+    "prettier": "^3.9.5",
     "prettier-plugin-organize-imports": "^4.3.0",
-    "prettier-plugin-tailwindcss": "^0.7.1"
+    "prettier-plugin-tailwindcss": "^0.8.0"
   }
 }

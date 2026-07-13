@@ -109,7 +109,7 @@ export function Chat({ chatId }: ChatProps) {
     focusMessageInput()
   }
 
-  const handleSendMessage = async (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     if (message.trim() === '' && selectedImages.length === 0) return

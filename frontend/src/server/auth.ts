@@ -5,7 +5,7 @@ import { useAppSession } from './session'
 import { BACKEND_URL, getValidToken } from './utils'
 
 export const signUpFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: SignUpData) => data)
+  .validator((data: SignUpData) => data)
   .handler(async ({ data }) => {
     try {
       const response = await fetch(`${BACKEND_URL}/auth/signup`, {
@@ -41,7 +41,7 @@ export const signUpFn = createServerFn({ method: 'POST' })
   })
 
 export const signInFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: SignInData) => data)
+  .validator((data: SignInData) => data)
   .handler(async ({ data }) => {
     try {
       const response = await fetch(`${BACKEND_URL}/auth/signin`, {

@@ -9,7 +9,7 @@ export type UpdateUserProfileInput = {
 }
 
 export const updateUserProfileFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: UpdateUserProfileInput) => data)
+  .validator((data: UpdateUserProfileInput) => data)
   .handler(async ({ data }) => {
     const session = await useAppSession()
 

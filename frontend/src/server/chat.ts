@@ -24,7 +24,7 @@ export const getAuthTokenFn = createServerFn({ method: 'GET' }).handler(async ()
 })
 
 export const searchUsersFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: SearchUsersRequest) => data)
+  .validator((data: SearchUsersRequest) => data)
   .handler(async ({ data }) => {
     const result = await authenticatedFetch<ChatUser[]>(
       '/chat/search-users',
@@ -55,7 +55,7 @@ export const searchUsersFn = createServerFn({ method: 'POST' })
   })
 
 export const createChatFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: CreateChatRequest) => data)
+  .validator((data: CreateChatRequest) => data)
   .handler(async ({ data }) => {
     const result = await authenticatedFetch<CreateChatResponse>(
       '/chat/create',
@@ -95,7 +95,7 @@ export const getUserChatsFn = createServerFn({ method: 'GET' }).handler(async ()
 })
 
 export const getChatByIdFn = createServerFn({ method: 'GET' })
-  .inputValidator((chatId: string) => chatId)
+  .validator((chatId: string) => chatId)
   .handler(async ({ data: chatId }) => {
     const result = await authenticatedFetch<GetChatByIdResponse>(
       `/chat/${chatId}`,
@@ -115,7 +115,7 @@ export const getChatByIdFn = createServerFn({ method: 'GET' })
   })
 
 export const getChatMessagesFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: GetChatMessagesRequest) => data)
+  .validator((data: GetChatMessagesRequest) => data)
   .handler(async ({ data }) => {
     const result = await authenticatedFetch<GetChatMessagesResponse>(
       '/messages/get',
@@ -137,7 +137,7 @@ export const getChatMessagesFn = createServerFn({ method: 'POST' })
   })
 
 export const sendMessageFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: SendMessageRequest) => data)
+  .validator((data: SendMessageRequest) => data)
   .handler(async ({ data }) => {
     const result = await authenticatedFetch<{ message_id: string }>(
       '/messages/send',
@@ -159,7 +159,7 @@ export const sendMessageFn = createServerFn({ method: 'POST' })
   })
 
 export const editMessageFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: EditMessageRequest) => data)
+  .validator((data: EditMessageRequest) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(
       '/messages/edit',
@@ -171,7 +171,7 @@ export const editMessageFn = createServerFn({ method: 'POST' })
   })
 
 export const deleteMessageFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: DeleteMessageRequest) => data)
+  .validator((data: DeleteMessageRequest) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(
       '/messages/delete',
@@ -187,25 +187,25 @@ type ChatIdPayload = {
 }
 
 export const clearChatFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: ChatIdPayload) => data)
+  .validator((data: ChatIdPayload) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(`/chat/${data.chatId}/clear`, {}, 'Failed to clear chat')
   })
 
 export const deleteChatFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: ChatIdPayload) => data)
+  .validator((data: ChatIdPayload) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(`/chat/${data.chatId}/delete`, {}, 'Failed to delete chat')
   })
 
 export const leaveChatFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: ChatIdPayload) => data)
+  .validator((data: ChatIdPayload) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(`/chat/${data.chatId}/leave`, {}, 'Failed to leave chat')
   })
 
 export const renameChatFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: RenameChatRequest) => data)
+  .validator((data: RenameChatRequest) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(
       `/chat/${data.chat_id}/rename`,
@@ -217,7 +217,7 @@ export const renameChatFn = createServerFn({ method: 'POST' })
   })
 
 export const addChatMemberFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: ModifyChatMemberRequest) => data)
+  .validator((data: ModifyChatMemberRequest) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(
       `/chat/${data.chat_id}/members/add`,
@@ -229,7 +229,7 @@ export const addChatMemberFn = createServerFn({ method: 'POST' })
   })
 
 export const removeChatMemberFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: ModifyChatMemberRequest) => data)
+  .validator((data: ModifyChatMemberRequest) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(
       `/chat/${data.chat_id}/members/remove`,
@@ -241,7 +241,7 @@ export const removeChatMemberFn = createServerFn({ method: 'POST' })
   })
 
 export const changeChatAdminFn = createServerFn({ method: 'POST' })
-  .inputValidator((data: ChangeChatAdminRequest) => data)
+  .validator((data: ChangeChatAdminRequest) => data)
   .handler(async ({ data }) => {
     return authenticatedFetch(
       `/chat/${data.chat_id}/change-admin`,
