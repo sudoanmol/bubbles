@@ -1,7 +1,0 @@
-procs:
-  frontend:
-    cwd: frontend
-    shell: "bun run dev"
-  backend:
-    cwd: backend
-    shell: "make dev"
