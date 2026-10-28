@@ -3,7 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import type { Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
-import { ArrowLeftIcon } from 'lucide-react'
+import { ArrowLeftIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 
 import { Avatar } from '@/components/avatar'
@@ -20,6 +20,7 @@ import {
   MessageScrollerViewport,
 } from '@/components/ui/message-scroller'
 import { api, chatQuery, hydrateChat, merge, messagesQuery, PAGE, type LocalMessage } from '@/lib/api'
+import { discardMessage, retryMessage, useConnection } from '@/lib/socket'
 import { cachedOlder, saveMessages } from '@/lib/store'
 import { formatDay, formatTime } from '@/lib/time'
 
@@ -98,8 +99,16 @@ function MessageList({ chatId, uid }: { chatId: string; uid: string }) {
                             <BubbleContent className={corners(mine, i === 0, i === run.length - 1)}>
                               {m.body}
                             </BubbleContent>
+                            {m.failed && (
+                              <span
+                                aria-hidden="true"
+                                className="absolute top-1/2 right-full mr-2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-full bg-danger text-sm leading-4 font-extrabold text-paper"
+                              >
+                                !
+                              </span>
+                            )}
                           </Bubble>
-                          {m === lastMine && <Status message={m} />}
+                          {(m === lastMine || m.failed) && <Status message={m} />}
                         </MessageContent>
                       </Message>
                     </MessageScrollerItem>
@@ -134,8 +143,38 @@ function corners(mine: boolean, first: boolean, last: boolean) {
   return cn(top, bottom)
 }
 
+/** Delivery state under a message of yours (Paper: "Offline & delivery"). */
 function Status({ message }: { message: LocalMessage }) {
-  if (message.failed) return <MessageFooter className="text-danger">Not sent</MessageFooter>
+  const queryClient = useQueryClient()
+  const connection = useConnection()
+  if (message.failed)
+    return (
+      <MessageFooter className="gap-2.5">
+        <span className="font-semibold text-danger">Not sent</span>
+        <button
+          type="button"
+          onClick={() => retryMessage(queryClient, message)}
+          className="flex items-center gap-1 rounded-full border-[1.5px] border-ink bg-paper px-2.5 py-[3px] font-semibold text-ink transition-colors hover:bg-sun"
+        >
+          <RotateCcwIcon className="size-3" strokeWidth={2.75} aria-hidden="true" />
+          Retry
+        </button>
+        <button
+          type="button"
+          onClick={() => discardMessage(queryClient, message)}
+          className="px-1 py-[3px] font-semibold transition-colors hover:text-ink"
+        >
+          Delete
+        </button>
+      </MessageFooter>
+    )
+  if (message.seq === null && connection !== 'online')
+    return (
+      <MessageFooter className="gap-[5px]">
+        <ClockIcon className="size-[13px]" strokeWidth={2.5} aria-hidden="true" />
+        Waiting for network
+      </MessageFooter>
+    )
   return <MessageFooter>{message.seq === null ? 'Sending…' : `Sent ${formatTime(message.ts)}`}</MessageFooter>
 }
 

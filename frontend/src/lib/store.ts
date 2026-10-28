@@ -95,6 +95,8 @@ export const saveMessages = (chat: string, messages: Message[], dropBefore?: num
 export const allOutbox = () =>
   use<LocalMessage[]>([], async (db) => (await db.getAll('outbox')).sort((a, b) => (a.cid < b.cid ? -1 : 1)))
 
+export const deleteOutbox = (cid: string) => use(undefined, (db) => db.delete('outbox', cid))
+
 export const saveOutbox = (message: LocalMessage) => use(undefined, (db) => db.put('outbox', message).then(() => {}))
 
 /** The server stored an outbox message: move it to `messages` with its `seq`. */

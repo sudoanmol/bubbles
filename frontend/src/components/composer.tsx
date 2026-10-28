@@ -4,6 +4,7 @@ import { cn } from 'cn'
 import { ArrowUpIcon, PlusIcon, SmileIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 
+import { ConnectionPill } from '@/components/connection-pill'
 import { sendMessage } from '@/lib/socket'
 
 // The picker (Base UI Popover + frimousse) loads on first hover or focus of its button, not with the chat.
@@ -44,12 +45,13 @@ export function Composer({ chatId, uid, placeholder }: { chatId: string; uid: st
 
   return (
     <form
-      className="shrink-0 px-4 pb-4 md:px-7 md:pb-6"
+      className="relative shrink-0 px-4 pb-4 md:px-7 md:pb-6"
       onSubmit={(e) => {
         e.preventDefault()
         send()
       }}
     >
+      <ConnectionPill />
       <div className="flex items-end gap-3">
         {/* ponytail: no upload yet; images arrive in phase 4 (direct-to-R2 uploads). */}
         <button
