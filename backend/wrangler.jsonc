@@ -8,5 +8,12 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "dev": { "port": 8790 },
-  "d1_databases": [{ "binding": "DB", "database_name": "bubbles", "migrations_dir": "drizzle" }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bubbles",
+      "database_id": "36d7f246-3c6b-4121-a5d2-94aae022ea76",
+      "migrations_dir": "drizzle",
+    },
+  ],
 }
