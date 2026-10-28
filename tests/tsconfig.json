@@ -10,7 +10,7 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "lib": ["ESNext", "DOM"],
-    "types": ["node"]
+    "types": ["node", "../frontend/node_modules/vite/client"]
   },
   "include": ["."]
 }

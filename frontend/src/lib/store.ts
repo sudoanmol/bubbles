@@ -17,6 +17,8 @@ interface Schema extends DBSchema {
 }
 
 let current: { uid: string; db: Promise<IDBPDatabase<Schema>> } | undefined
+// Dev only: a hot update would load a second copy of this module without the open database. Reload the page instead.
+import.meta.hot?.accept(() => location.reload())
 
 /** Opens the signed-in user's database. Each account gets its own, so switching accounts never mixes data. */
 export function openStore(uid: string) {

@@ -10,6 +10,9 @@ import { cursor, type LocalMessage, type Pending } from './log'
 import { allOutbox, currentUid, deleteOutbox, saveMessages, saveOutbox } from './store'
 
 let socket: WebSocket | null = null
+// Dev only: a hot update would load a second copy of this module, with no socket and stuck on "connecting", while the
+// first keeps the real one. Reload the page instead.
+import.meta.hot?.accept(() => location.reload())
 // Monotonic so two messages written in the same millisecond still sort, and replay, in the order they were written.
 const ulid = monotonicFactory()
 // Outbox writes and sends run one at a time, in the order they were made: a frame goes out only once it is in
