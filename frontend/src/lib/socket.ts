@@ -5,9 +5,19 @@ import { useSyncExternalStore } from 'react'
 import { monotonicFactory } from 'ulid'
 import * as v from 'valibot'
 
-import { applyRead, bumpInbox, clearUnread, inboxQuery, messagesQuery, outboxQuery, upsertMessages } from './api'
+import {
+  applyRead,
+  bumpInbox,
+  clearUnread,
+  inboxQuery,
+  markOnline,
+  messagesQuery,
+  outboxQuery,
+  upsertMessages,
+} from './api'
 import { cursor, type LocalMessage, type Pending } from './log'
 import { allOutbox, currentUid, deleteOutbox, saveMessages, saveOutbox } from './store'
+import { startTyping, stopTyping } from './typing'
 
 let socket: WebSocket | null = null
 // Dev only: a hot update would load a second copy of this module, with no socket and stuck on "connecting", while the
@@ -85,9 +95,9 @@ export function connect(queryClient: QueryClient) {
       for (const p of await allOutbox()) if (!p.failed) ws.send(frame(p))
     })
     // Catch up on whatever was written while connecting or away, the first connect included: the inbox, and every
-    // chat on screen, with its members' reads. Chats not on screen sync when opened.
+    // chat on screen, with its members' reads and presence. Chats not on screen sync when opened.
     void queryClient.invalidateQueries({
-      predicate: ({ queryKey: [k] }) => k === 'inbox' || k === 'messages' || k === 'chat',
+      predicate: ({ queryKey: [k] }) => k === 'inbox' || k === 'messages' || k === 'chat' || k === 'presence',
     })
   })
 
@@ -105,6 +115,10 @@ export function connect(queryClient: QueryClient) {
         break
       case 'read':
         applyRead(queryClient, f)
+        break
+      case 'typing':
+        startTyping(f.chat, f.uid)
+        markOnline(queryClient, f.chat, f.uid)
         break
     }
   })
@@ -124,6 +138,9 @@ function receive(queryClient: QueryClient, msg: Message) {
   // Stored, so no longer pending; this socket's own copy can beat the ack. saveMessages clears it from IndexedDB.
   setOutbox(queryClient, (outbox) => outbox.filter((p) => p.cid !== msg.cid))
   void saveMessages(msg.chat, [msg])
+  // Their message replaces the dots; a fresh entry (not a copy from a sync) means they're around.
+  if (msg.kind === 'text') stopTyping(msg.chat, msg.sender)
+  if (msg.sender !== currentUid() && Date.now() - msg.ts < 60_000) markOnline(queryClient, msg.chat, msg.sender)
   // A message past a gap shows right away; the gap is fetched now if the chat is on screen, or when it next opens.
   const hi = held && cursor(held)
   if (hi !== undefined && msg.seq > hi + 1) void queryClient.invalidateQueries({ queryKey })
@@ -145,6 +162,18 @@ export function markRead(queryClient: QueryClient, chat: string, seq: number) {
   socket.send(JSON.stringify({ t: 'read', chat, seq } satisfies ClientFrame))
 }
 
+/** How often a typing event goes out while someone keeps typing. */
+const TYPING_EVERY_MS = 3_000
+const typedAt = new Map<string, number>()
+
+/** Tells the chat you're typing, at most every 3 s. Ephemeral: dropped while offline, never in the outbox. */
+export function sendTyping(chat: string) {
+  const now = Date.now()
+  if (socket?.readyState !== WebSocket.OPEN || now - (typedAt.get(chat) ?? 0) < TYPING_EVERY_MS) return
+  typedAt.set(chat, now)
+  socket.send(JSON.stringify({ t: 'typing', chat } satisfies ClientFrame))
+}
+
 /** Sends a message optimistically. It goes to the outbox first, so it survives a reload or going offline. */
 export function sendMessage(
   queryClient: QueryClient,
@@ -154,6 +183,8 @@ export function sendMessage(
   replyTo?: LocalMessage
 ) {
   const cid = ulid()
+  // The message ends this round of typing; the next keystroke announces the next one at once.
+  typedAt.delete(chat)
   const reply = replyTo?.seq ? { seq: replyTo.seq, sender: replyTo.sender, body: replyTo.body.slice(0, 200) } : null
   const local: LocalMessage = {
     chat,

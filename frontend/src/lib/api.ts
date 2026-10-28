@@ -5,6 +5,7 @@ import {
   type Chat,
   type InboxItem,
   type Message,
+  type Presence,
   type Profile,
   type ServerFrame,
 } from 'backend/protocol'
@@ -96,6 +97,24 @@ export const messagesQuery = (chat: string) =>
       return merge(kept, page)
     },
   })
+
+/**
+ * Whether the other members are online, polled while the chat is open and refetched on reconnect. Never stored: an
+ * old answer is worse than none. A member typing or writing marks them online in between.
+ * ponytail: polls every minute; push changes to open chats if that lag ever matters.
+ */
+export const presenceQuery = (chat: string) =>
+  queryOptions({
+    queryKey: ['presence', chat],
+    queryFn: () => api<Record<string, Presence>>(`/chats/${chat}/presence`),
+    refetchInterval: 60_000,
+  })
+
+/** A member just did something in the chat, so they're online. */
+export const markOnline = (queryClient: QueryClient, chat: string, uid: string) =>
+  queryClient.setQueryData<Record<string, Presence>>(presenceQuery(chat).queryKey, (all) =>
+    all && !all[uid]?.online ? { ...all, [uid]: { online: true, lastSeen: all[uid]?.lastSeen ?? null } } : all
+  )
 
 export const searchUsersQuery = (q: string) =>
   queryOptions({

@@ -1,6 +1,6 @@
-import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { canEdit, type Read, type Message as Stored } from 'backend/protocol'
+import { canEdit, type Profile, type Read, type Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon, BanIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
@@ -21,11 +21,13 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from '@/components/ui/message-scroller'
-import { api, chatQuery, hydrateChat, messagesQuery, outboxQuery, PAGE, upsertMessages } from '@/lib/api'
+import { useNow } from '@/hooks/use-now'
+import { api, chatQuery, hydrateChat, messagesQuery, outboxQuery, PAGE, presenceQuery, upsertMessages } from '@/lib/api'
 import { withPending, type LocalMessage } from '@/lib/log'
 import { discardMessage, markRead, patchMessage, retryMessage, useConnection } from '@/lib/socket'
 import { cachedOlder, checkAccount, currentUid, saveMessages } from '@/lib/store'
-import { formatDay, formatShort, formatTime } from '@/lib/time'
+import { formatAgo, formatDay, formatShort, formatTime } from '@/lib/time'
+import { useTyping } from '@/lib/typing'
 
 export const Route = createFileRoute('/_app/c/$chatId')({
   // The local copy renders first; the network only blocks a chat this device has never opened.
@@ -57,7 +59,7 @@ function ChatView() {
         <Avatar id={peer.id} name={peer.name} className="size-10 rounded-full text-base" />
         <div className="flex min-w-0 flex-col">
           <span className="truncate leading-5 font-semibold">{peer.name}</span>
-          <span className="truncate text-[13px] leading-4 font-medium text-muted-foreground">@{peer.username}</span>
+          <PresenceLine chatId={chatId} peer={peer} />
         </div>
       </header>
       {/* autoScroll keeps the view pinned to the newest message while you are at the bottom, through layout
@@ -96,13 +98,10 @@ function MessageList({
   const messages = withPending(chatId, log, outbox, uid)
   const lastMine = messages.findLast((m) => m.sender === uid && !m.deleted)
   const { scrollToMessage } = useMessageScroller()
+  const typing = (useTyping()[chatId] ?? []).filter((id) => id !== uid)
 
   // The clock the edit window is checked against; Edit disappears within half a minute of the window closing.
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
+  const now = useNow(30_000)
 
   // An open chat in a visible tab is read up to its newest entry; sent again on reconnect (the socket forgets it).
   const visible = useSyncExternalStore(onVisibility, () => document.visibilityState === 'visible')
@@ -233,10 +232,35 @@ function MessageList({
               </Fragment>
             )
           })}
+          {/* Paper: "Typing & presence". */}
+          {typing.length > 0 && (
+            <MessageScrollerItem className="mt-2 self-start">
+              <output
+                aria-label={`${typing.map((id) => names.get(id) ?? 'Someone').join(', ')} typing`}
+                className="flex gap-[5px] rounded-bubble rounded-bl-[6px] border-[1.5px] border-line bg-paper px-4 py-3.5"
+              >
+                {['bg-gum', 'bg-sun [animation-delay:150ms]', 'bg-cobalt [animation-delay:300ms]'].map((dot) => (
+                  <span key={dot} className={cn('size-2 rounded-full motion-safe:animate-typing', dot)} />
+                ))}
+              </output>
+            </MessageScrollerItem>
+          )}
         </MessageScrollerContent>
       </MessageScrollerViewport>
       <MessageScrollerButton />
     </MessageScroller>
+  )
+}
+
+/** Online, or when they were last seen, under the name in the header (Paper: "Typing & presence"). */
+function PresenceLine({ chatId, peer }: { chatId: string; peer: Profile }) {
+  const presence = useQuery(presenceQuery(chatId)).data?.[peer.id]
+  const now = useNow(60_000)
+  if (presence?.online) return <span className="text-[13px] leading-4 font-medium text-mint">online</span>
+  return (
+    <span className="truncate text-[13px] leading-4 font-medium text-muted-foreground">
+      {presence?.lastSeen ? `active ${formatAgo(presence.lastSeen, now)}` : `@${peer.username}`}
+    </span>
   )
 }
 

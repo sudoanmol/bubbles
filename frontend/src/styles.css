@@ -24,6 +24,19 @@
 
   --shadow-sticker: 3px 3px 0 var(--color-ink);
   --shadow-sticker-sun: 3px 3px 0 var(--color-sun);
+
+  /* Typing dots (Paper: "Typing & presence"): each hops in turn. */
+  --animate-typing: typing 1.2s ease-in-out infinite;
+  @keyframes typing {
+    0%,
+    60%,
+    100% {
+      transform: translateY(0);
+    }
+    30% {
+      transform: translateY(-4px);
+    }
+  }
 }
 
 /* shadcn's semantic tokens, mapped onto the palette above. */

@@ -53,10 +53,12 @@ export const ClientFrame = v.variant('t', [
   v.object({ t: v.literal('react'), ...OnMessage, emoji: v.nullable(Emoji) }),
   /** Read up to `seq`. Not stored in the outbox: the client sends it again whenever it reconnects with the chat open. */
   v.object({ t: v.literal('read'), chat: ChatId, seq: Seq }),
+  /** Typing in a chat; sent at most every few seconds while typing. Passed on to the other members, never stored. */
+  v.object({ t: v.literal('typing'), chat: ChatId }),
 ])
 export type ClientFrame = v.InferOutput<typeof ClientFrame>
 export type Patch = Extract<ClientFrame, { t: 'edit' | 'delete' | 'react' }>
-export type Write = Exclude<ClientFrame, { t: 'read' }>
+export type Write = Exclude<ClientFrame, { t: 'read' | 'typing' }>
 
 /** How long after sending a message you can still edit it, as in iMessage and WhatsApp. Deleting has no limit. */
 export const EDIT_WINDOW_MS = 15 * 60_000
@@ -107,8 +109,16 @@ export const ServerFrame = v.variant('t', [
     ts: v.number(),
     unread: v.optional(v.number()),
   }),
+  /** A member is typing in a chat. Shown for a few seconds, or until their message arrives. */
+  v.object({ t: v.literal('typing'), chat: v.string(), uid: v.string() }),
 ])
 export type ServerFrame = v.InferOutput<typeof ServerFrame>
+
+/** Ephemeral frames: passed to a user's devices as they happen, never stored or retried. */
+export type Ephemeral = Extract<ServerFrame, { t: 'read' | 'typing' }>
+
+/** Whether a user has a device connected now, and when their last one disconnected (null if never seen). */
+export type Presence = { online: boolean; lastSeen: number | null }
 
 export type Profile = { id: string; name: string; username: string; image: string | null }
 

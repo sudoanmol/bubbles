@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 
-import { applyPatch, type Message, type Read, type ServerFrame, type Write } from '../protocol'
+import { applyPatch, type Ephemeral, type Message, type Read, type ServerFrame, type Write } from '../protocol'
 import { migrate } from './schema'
 
 const PAGE = 50
@@ -136,12 +136,7 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
     if (Math.min(seq, end) > read.seq) {
       read = { seq: Math.min(seq, end), ts: Date.now() }
       this.sql.exec('UPDATE member SET read_seq = ?, read_ts = ? WHERE user_id = ?', read.seq, read.ts, uid)
-      const receipt = { t: 'read', chat: this.id, uid, ...read } as const
-      for (const m of this.members(uid)!)
-        if (m.user_id !== uid)
-          void this.env.USER.get(this.env.USER.idFromName(m.user_id))
-            .receipt(receipt)
-            .catch((error) => console.error('Receipt failed', error))
+      this.relay(uid, { t: 'read', chat: this.id, uid, ...read })
     }
     const { unread } = this.sql
       .exec<{ unread: number }>(
@@ -151,6 +146,20 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       )
       .one()
     return { t: 'read', chat: this.id, uid, ...read, unread }
+  }
+
+  /** Tells the other members' devices that `uid` is typing. */
+  typing(uid: string) {
+    if (this.members(uid)) this.relay(uid, { t: 'typing', chat: this.id, uid })
+  }
+
+  /** Passes an ephemeral frame from `uid` to every other member's devices, once, without waiting. */
+  relay(uid: string, frame: Ephemeral) {
+    for (const m of this.members(uid) ?? [])
+      if (m.user_id !== uid)
+        void this.env.USER.get(this.env.USER.idFromName(m.user_id))
+          .push(frame)
+          .catch((error) => console.error('Relay failed', error))
   }
 
   alarm() {

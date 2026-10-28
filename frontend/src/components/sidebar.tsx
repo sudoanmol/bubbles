@@ -11,11 +11,13 @@ import { inboxQuery } from '@/lib/api'
 import { sessionQuery, signOut as requestSignOut, type Session } from '@/lib/session'
 import { deleteStore } from '@/lib/store'
 import { formatShort } from '@/lib/time'
+import { useTyping } from '@/lib/typing'
 
 export function Sidebar({ user, className }: { user: Session['user']; className?: string }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const inbox = useQuery(inboxQuery)
+  const typing = useTyping()
   const [search, setSearch] = useState('')
 
   const signOut = useMutation({
@@ -75,14 +77,17 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
               <span
                 className={cn(
                   'truncate text-sm leading-[18px] text-muted-foreground group-data-[status=active]:text-paper/65',
-                  item.unread > 0 && 'font-medium text-ink'
+                  item.unread > 0 && 'font-medium text-ink',
+                  typing[item.chatId]?.length && 'font-medium text-cobalt'
                 )}
               >
-                {!item.preview
-                  ? `@${item.peer.username}`
-                  : item.preview.deleted
-                    ? 'Message deleted'
-                    : `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`}
+                {typing[item.chatId]?.length
+                  ? 'typing…'
+                  : !item.preview
+                    ? `@${item.peer.username}`
+                    : item.preview.deleted
+                      ? 'Message deleted'
+                      : `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`}
               </span>
             </div>
             <div className="flex w-11 shrink-0 flex-col items-end gap-1.5 self-start pt-0.5">

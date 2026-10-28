@@ -7,7 +7,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ConnectionPill } from '@/components/connection-pill'
 import { messagesQuery, outboxQuery } from '@/lib/api'
 import { withPending, type LocalMessage } from '@/lib/log'
-import { patchMessage, sendMessage } from '@/lib/socket'
+import { patchMessage, sendMessage, sendTyping } from '@/lib/socket'
 
 // The picker (Base UI Popover + frimousse) loads on first hover or focus of its button, not with the chat.
 const loadEmojiPicker = () => import('@/components/emoji-picker')
@@ -153,7 +153,10 @@ export function Composer({
             rows={1}
             maxLength={MAX_BODY}
             value={body}
-            onChange={(e) => setBody(e.target.value)}
+            onChange={(e) => {
+              setBody(e.target.value)
+              if (e.target.value.trim() && mode?.t !== 'edit') sendTyping(chatId)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()

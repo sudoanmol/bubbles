@@ -1,7 +1,16 @@
 import { DurableObject } from 'cloudflare:workers'
 import * as v from 'valibot'
 
-import { ClientFrame, nextPreview, nextRead, type Message, type Preview, type ServerFrame } from '../protocol'
+import {
+  ClientFrame,
+  nextPreview,
+  nextRead,
+  type Ephemeral,
+  type Message,
+  type Presence,
+  type Preview,
+  type ServerFrame,
+} from '../protocol'
 import { migrate } from './schema'
 
 export type InboxRow = {
@@ -64,6 +73,11 @@ export class UserDO extends DurableObject<CloudflareBindings> {
       return send(ws, { t: 'error', message: 'Invalid frame' })
     }
     if (frame.t === 'read') return this.read(frame.chat, frame.seq)
+    // Not awaited: typing is best effort and must not hold up the frames behind it.
+    if (frame.t === 'typing')
+      return void this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat))
+        .typing(this.uid)
+        .catch((error) => console.error('Typing failed', error))
     let result: Message | { refused: string }
     try {
       result = await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
@@ -91,15 +105,31 @@ export class UserDO extends DurableObject<CloudflareBindings> {
         chat,
         state.seq
       )
-      this.receipt(state)
+      this.push(state)
     } catch (error) {
       console.error('Read failed', error)
     }
   }
 
-  /** Passes a read receipt to every device. Not stored: a device that misses one gets the reads with the chat. */
-  receipt(frame: Extract<ServerFrame, { t: 'read' }>) {
+  /** Passes a receipt or a typing event to every device. Not stored: a device that misses a read gets it with the chat. */
+  push(frame: Ephemeral) {
     for (const ws of this.ctx.getWebSockets()) send(ws, frame)
+  }
+
+  /** The last socket to close sets when the user was last seen; while another is open they show as online anyway. */
+  webSocketClose() {
+    this.ctx.storage.kv.put('lastSeen', Date.now())
+  }
+
+  /**
+   * Online while any device is connected.
+   * ponytail: a device that drops without closing shows online until the runtime notices the dead socket.
+   */
+  presence(): Presence {
+    return {
+      online: this.ctx.getWebSockets().some((ws) => ws.readyState === WebSocket.OPEN),
+      lastSeen: this.ctx.storage.kv.get<number>('lastSeen') ?? null,
+    }
   }
 
   /** Called by ChatDO with a chat's next log entries, in order. Safe to call again with entries already stored. */
