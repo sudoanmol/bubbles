@@ -146,14 +146,14 @@ Each phase lists what to build and when it counts as done.
 
 ## Performance budget
 
-| Metric                                    | Target             | How it's measured                        |
-| ----------------------------------------- | ------------------ | ---------------------------------------- |
-| JS on the first load of the app           | < 120 KB gzip      | Build output check in CI                 |
-| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine    |
-| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                |
-| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time |
-| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                         |
-| Inbox load                                | 1 DO read, < 30 ms | Worker timing                            |
+| Metric                                    | Target             | How it's measured                                                                                                                       |
+| ----------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| JS on the first load of a chat            | < 170 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. React + TanStack Router alone are ~85 KB |
+| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                   |
+| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                               |
+| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                |
+| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                        |
+| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                           |
 
 ## Differentiators (each needs proof, not just a claim)
 
