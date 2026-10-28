@@ -1,15 +1,36 @@
 @import 'tailwindcss';
 
-* {
-  box-sizing: border-box;
+/* Tokens mirror the Paper file "Bubbles". */
+@theme {
+  --color-paper: #ffffff;
+  --color-ink: #121212;
+  --color-muted: #6a6a6a;
+  --color-line: #ededed;
+  --color-wash: #f6f6f4;
+  --color-sun: #ffd43b;
+  --color-cobalt: #2e5bff;
+  --color-gum: #ff7eb6;
+  --color-danger: #e5383b;
+  --color-mint: #1fae6b;
+
+  --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+
+  --radius-bubble: 22px;
+
+  --shadow-sticker: 3px 3px 0 var(--color-ink);
+  --shadow-sticker-sun: 3px 3px 0 var(--color-sun);
 }
 
 html,
-body,
-#app {
+body {
   min-height: 100%;
 }
 
 body {
   margin: 0;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
