@@ -2,13 +2,17 @@ import type { QueryClient } from '@tanstack/react-query'
 import { ServerFrame, type ClientFrame, type Message } from 'backend/protocol'
 import { WebSocket } from 'partysocket'
 import { useSyncExternalStore } from 'react'
-import { ulid } from 'ulid'
+import { monotonicFactory } from 'ulid'
 import * as v from 'valibot'
 
 import { bumpInbox, cursor, inboxQuery, messagesQuery, upsertMessage, type LocalMessage } from './api'
 import { ackOutbox, allOutbox, deleteOutbox, failOutbox, saveMessages, saveOutbox } from './store'
 
 let socket: WebSocket | null = null
+// Monotonic so two messages written in the same millisecond still sort, and replay, in the order they were written.
+const ulid = monotonicFactory()
+// The outbox replay of the current connection. New sends queue behind it so they never overtake older unsent ones.
+let replayed: Promise<void> = Promise.resolve()
 
 /** `connecting` covers the first connect and every reconnect; `offline` is when the browser says there's no network. */
 export type Connection = 'online' | 'connecting' | 'offline'
@@ -34,6 +38,12 @@ export function useConnection() {
 const frame = (m: LocalMessage) =>
   JSON.stringify({ t: 'send', chat: m.chat, cid: m.cid, body: m.body } satisfies ClientFrame)
 
+/** Sends now if connected; offline, the message waits in the outbox for the next connect. */
+const send = (m: LocalMessage) =>
+  void replayed.then(() => {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(frame(m))
+  })
+
 /** Opens the device's single socket (held by the user's UserDO) and feeds frames into the cache and the store. */
 export function connect(queryClient: QueryClient) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`)
@@ -48,7 +58,8 @@ export function connect(queryClient: QueryClient) {
     sync()
     // Anything unsent, from this session or an earlier one, goes again in the order it was written. Resending a
     // message the server already has is harmless: it dedupes on `cid` and acks again.
-    for (const m of await allOutbox()) ws.send(frame(m))
+    replayed = allOutbox().then((outbox) => outbox.forEach((m) => ws.send(frame(m))))
+    await replayed
     // After a reconnect, catch up: the inbox, and every chat on screen. Chats not on screen sync when opened.
     if (opened)
       void queryClient.invalidateQueries({ predicate: ({ queryKey: [k] }) => k === 'inbox' || k === 'messages' })
@@ -100,8 +111,7 @@ export function sendMessage(queryClient: QueryClient, chat: string, sender: stri
   const message: LocalMessage = { chat, cid: ulid(), sender, body, seq: null, ts: Date.now() }
   upsertMessage(queryClient, chat, message)
   void saveOutbox(message)
-  // Offline, it waits in the outbox and goes out on the next connect.
-  if (socket?.readyState === WebSocket.OPEN) socket.send(frame(message))
+  send(message)
 }
 
 /** Sends a message the server refused once more. */
@@ -109,7 +119,7 @@ export function retryMessage(queryClient: QueryClient, message: LocalMessage) {
   const retried = { ...message, failed: false }
   upsertMessage(queryClient, message.chat, retried)
   void saveOutbox(retried)
-  if (socket?.readyState === WebSocket.OPEN) socket.send(frame(retried))
+  send(retried)
 }
 
 /** Drops a message that was never sent. */
