@@ -1,13 +1,13 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { applyPatch, ServerFrame, type Message, type Patch } from 'backend/protocol'
+import { applyPatch, ServerFrame, type ClientFrame, type InboxItem, type Message, type Patch } from 'backend/protocol'
 import { WebSocket } from 'partysocket'
 import { useSyncExternalStore } from 'react'
 import { monotonicFactory } from 'ulid'
 import * as v from 'valibot'
 
-import { bumpInbox, inboxQuery, messagesQuery, outboxQuery, upsertMessages } from './api'
+import { applyRead, bumpInbox, clearUnread, inboxQuery, messagesQuery, outboxQuery, upsertMessages } from './api'
 import { cursor, type LocalMessage, type Pending } from './log'
-import { allOutbox, deleteOutbox, saveMessages, saveOutbox } from './store'
+import { allOutbox, currentUid, deleteOutbox, saveMessages, saveOutbox } from './store'
 
 let socket: WebSocket | null = null
 // Monotonic so two messages written in the same millisecond still sort, and replay, in the order they were written.
@@ -74,14 +74,18 @@ export function connect(queryClient: QueryClient) {
 
   ws.addEventListener('open', () => {
     sync()
+    // Reads sent before this connect may have been lost with the old socket; the chat on screen sends its read again.
+    readSent.clear()
     // Anything unsent, from this session or an earlier one, goes again in the order it was written, except what the
     // server refused, which waits for Retry. Resending what the server already has is harmless: it dedupes on `cid`.
     queue(async () => {
       for (const p of await allOutbox()) if (!p.failed) ws.send(frame(p))
     })
     // Catch up on whatever was written while connecting or away, the first connect included: the inbox, and every
-    // chat on screen. Chats not on screen sync when opened.
-    void queryClient.invalidateQueries({ predicate: ({ queryKey: [k] }) => k === 'inbox' || k === 'messages' })
+    // chat on screen, with its members' reads. Chats not on screen sync when opened.
+    void queryClient.invalidateQueries({
+      predicate: ({ queryKey: [k] }) => k === 'inbox' || k === 'messages' || k === 'chat',
+    })
   })
 
   ws.addEventListener('message', (event) => {
@@ -95,6 +99,9 @@ export function connect(queryClient: QueryClient) {
         break
       case 'error':
         if (f.cid) refused(queryClient, f.cid)
+        break
+      case 'read':
+        applyRead(queryClient, f)
         break
     }
   })
@@ -117,7 +124,22 @@ function receive(queryClient: QueryClient, msg: Message) {
   // A message past a gap shows right away; the gap is fetched now if the chat is on screen, or when it next opens.
   const hi = held && cursor(held)
   if (hi !== undefined && msg.seq > hi + 1) void queryClient.invalidateQueries({ queryKey })
-  if (!bumpInbox(queryClient, msg)) void queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey })
+  if (!bumpInbox(queryClient, msg, currentUid()!)) void queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey })
+}
+
+// The last read sent per chat on this connection, so the same one isn't sent on every render.
+const readSent = new Map<string, number>()
+
+/**
+ * Tells the server the chat is read up to `seq`, and clears its unread count here at once. Skipped while offline:
+ * reads aren't kept in the outbox, since the chat sends its read again when the socket reconnects.
+ */
+export function markRead(queryClient: QueryClient, chat: string, seq: number) {
+  clearUnread(queryClient, chat)
+  const item = queryClient.getQueryData<InboxItem[]>(inboxQuery.queryKey)?.find((i) => i.chatId === chat)
+  if ((item && item.readSeq >= seq) || socket?.readyState !== WebSocket.OPEN || (readSent.get(chat) ?? 0) >= seq) return
+  readSent.set(chat, seq)
+  socket.send(JSON.stringify({ t: 'read', chat, seq } satisfies ClientFrame))
 }
 
 /** Sends a message optimistically. It goes to the outbox first, so it survives a reload or going offline. */

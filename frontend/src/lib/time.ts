@@ -5,7 +5,7 @@ import { differenceInCalendarDays, isToday, isYesterday } from 'date-fns'
 const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' })
 const date = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
-const longDate = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+const longWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' })
 
 export const formatTime = (ts: number) => time.format(ts)
 
@@ -17,9 +17,9 @@ export function formatShort(ts: number) {
   return date.format(ts)
 }
 
-/** Day separators in a chat. */
+/** Time separators in a chat: Today, Yesterday, Tuesday this week, Oct 3 before that. */
 export function formatDay(ts: number) {
   if (isToday(ts)) return 'Today'
   if (isYesterday(ts)) return 'Yesterday'
-  return longDate.format(ts)
+  return differenceInCalendarDays(Date.now(), ts) < 7 ? longWeekday.format(ts) : date.format(ts)
 }

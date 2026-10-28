@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import type { Message as Stored } from 'backend/protocol'
+import type { Read, Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon, BanIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import { Avatar } from '@/components/avatar'
 import { Composer, type ComposerMode } from '@/components/composer'
@@ -23,9 +23,9 @@ import {
 } from '@/components/ui/message-scroller'
 import { api, chatQuery, hydrateChat, messagesQuery, outboxQuery, PAGE, upsertMessages } from '@/lib/api'
 import { withPending, type LocalMessage } from '@/lib/log'
-import { discardMessage, patchMessage, retryMessage, useConnection } from '@/lib/socket'
+import { discardMessage, markRead, patchMessage, retryMessage, useConnection } from '@/lib/socket'
 import { cachedOlder, checkAccount, currentUid, saveMessages } from '@/lib/store'
-import { formatDay, formatTime } from '@/lib/time'
+import { formatDay, formatShort, formatTime } from '@/lib/time'
 
 export const Route = createFileRoute('/_app/c/$chatId')({
   // The local copy renders first; the network only blocks a chat this device has never opened.
@@ -63,7 +63,7 @@ function ChatView() {
       {/* autoScroll keeps the view pinned to the newest message while you are at the bottom, through layout
           shifts (fonts, older pages, new messages); scrolling up releases it. */}
       <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
-        <MessageList chatId={chatId} uid={user.id} names={names} onMode={setMode} />
+        <MessageList chatId={chatId} uid={user.id} names={names} reads={chat.reads} onMode={setMode} />
       </MessageScrollerProvider>
       <Composer
         chatId={chatId}
@@ -81,11 +81,13 @@ function MessageList({
   chatId,
   uid,
   names,
+  reads,
   onMode,
 }: {
   chatId: string
   uid: string
   names: Map<string, string>
+  reads: Record<string, Read>
   onMode: (mode: ComposerMode) => void
 }) {
   const queryClient = useQueryClient()
@@ -94,6 +96,20 @@ function MessageList({
   const messages = withPending(chatId, log, outbox, uid)
   const lastMine = messages.findLast((m) => m.sender === uid && !m.deleted)
   const { scrollToMessage } = useMessageScroller()
+
+  // An open chat in a visible tab is read up to its newest entry; sent again on reconnect (the socket forgets it).
+  const visible = useSyncExternalStore(onVisibility, () => document.visibilityState === 'visible')
+  const connection = useConnection()
+  const end = log.at(-1)?.seq
+  useEffect(() => {
+    if (visible && end) markRead(queryClient, chatId, end)
+  }, [queryClient, chatId, end, visible, connection])
+
+  // How far the others have read: their receipt, or their own newest message, whichever is later.
+  let seen: Read = { seq: 0, ts: 0 }
+  for (const [id, read] of Object.entries(reads)) if (id !== uid && read.seq > seen.seq) seen = read
+  const theirs = messages.findLast((m) => m.sender !== uid && m.seq !== null)
+  if (theirs?.seq && theirs.seq > seen.seq) seen = { seq: theirs.seq, ts: theirs.ts }
 
   return (
     <MessageScroller className="flex-1">
@@ -107,18 +123,17 @@ function MessageList({
             const first = run[0]
             const mine = first.sender === uid
             const prev = all[r - 1]?.at(-1)
+            const apart = !prev || apartInTime(prev, first)
             return (
               <Fragment key={first.cid}>
-                {(!prev || !isSameDay(prev.ts, first.ts)) && (
-                  <MessageScrollerItem className="mt-4 mb-2.5 self-center first:mt-0">
-                    <span className="text-xs font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                      {formatDay(first.ts)}
-                    </span>
+                {/* Paper: "Time separators". */}
+                {apart && (
+                  <MessageScrollerItem className="mt-4 mb-2.5 self-center text-xs text-muted-foreground first:mt-0">
+                    <span className="font-semibold tracking-[0.08em] uppercase">{formatDay(first.ts)}</span>
+                    <span className="font-medium"> {formatTime(first.ts)}</span>
                   </MessageScrollerItem>
                 )}
-                <MessageGroup
-                  className={cn(prev && prev.sender !== first.sender && isSameDay(prev.ts, first.ts) && 'mt-2')}
-                >
+                <MessageGroup className={cn(!apart && 'mt-2')}>
                   {run.map((m, i) => {
                     const react = (emoji: string | null) => patchMessage(queryClient, uid, m, { t: 'react', emoji })
                     const quoted = m.reply && messages.find((q) => q.seq === m.reply!.seq)
@@ -139,7 +154,7 @@ function MessageList({
                                   : `${names.get(m.sender) ?? 'They'} deleted this message`}
                               </div>
                             ) : (
-                              <Bubble variant={mine ? 'outgoing' : 'incoming'} title={formatTime(m.ts)}>
+                              <Bubble variant={mine ? 'outgoing' : 'incoming'}>
                                 <BubbleContent
                                   className={cn(corners(mine, i === 0, i === run.length - 1), m.reply && 'p-2 pb-3')}
                                 >
@@ -197,7 +212,7 @@ function MessageList({
                               </Bubble>
                             )}
                             {!m.deleted && <Reactions message={m} mine={mine} uid={uid} onReact={react} />}
-                            {(m === lastMine || m.failed) && <Status message={m} />}
+                            {(m === lastMine || m.failed) && <Status message={m} seen={seen} />}
                             {m !== lastMine && !m.failed && !m.deleted && m.edited && (
                               <MessageFooter>Edited</MessageFooter>
                             )}
@@ -217,13 +232,23 @@ function MessageList({
   )
 }
 
-/** Consecutive messages from one sender on one day, so they stack as a group. */
+const HOUR = 60 * 60_000
+
+/** A new day, or an hour's quiet: the chat shows the time between them, as iMessage does. */
+const apartInTime = (a: LocalMessage, b: LocalMessage) => !isSameDay(a.ts, b.ts) || b.ts - a.ts > HOUR
+
+function onVisibility(listener: () => void) {
+  document.addEventListener('visibilitychange', listener)
+  return () => document.removeEventListener('visibilitychange', listener)
+}
+
+/** Consecutive messages from one sender with no time separator between them, so they stack as a group. */
 function runs(messages: LocalMessage[]) {
   const out: LocalMessage[][] = []
   for (const m of messages) {
     const run = out.at(-1)
     const last = run?.at(-1)
-    if (run && last && last.sender === m.sender && isSameDay(last.ts, m.ts)) run.push(m)
+    if (run && last && last.sender === m.sender && !apartInTime(last, m)) run.push(m)
     else out.push([m])
   }
   return out
@@ -237,7 +262,7 @@ function corners(mine: boolean, first: boolean, last: boolean) {
 }
 
 /** Delivery state under a message of yours (Paper: "Offline & delivery"). */
-function Status({ message }: { message: LocalMessage }) {
+function Status({ message, seen }: { message: LocalMessage; seen: Read }) {
   const queryClient = useQueryClient()
   const connection = useConnection()
   if (message.failed)
@@ -271,7 +296,11 @@ function Status({ message }: { message: LocalMessage }) {
   return (
     <MessageFooter>
       {message.edited && 'Edited · '}
-      {message.seq === null ? 'Sending…' : `Sent ${formatTime(message.ts)}`}
+      {message.seq === null
+        ? 'Sending…'
+        : seen.seq >= message.seq
+          ? `Read ${formatShort(seen.ts)}`
+          : `Sent ${formatTime(message.ts)}`}
     </MessageFooter>
   )
 }

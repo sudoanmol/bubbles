@@ -23,14 +23,21 @@ export function openStore(uid: string) {
   if (current?.uid === uid) return
   current = {
     uid,
-    // A new version starts the local copy over; it is only a cache of the server.
-    db: openDB<Schema>(`bubbles-${uid}`, 2, {
-      upgrade(db) {
-        for (const name of db.objectStoreNames) db.deleteObjectStore(name)
-        db.createObjectStore('messages', { keyPath: ['chat', 'seq'] })
-        db.createObjectStore('outbox', { keyPath: 'cid' })
-        db.createObjectStore('inbox', { keyPath: 'chatId' })
-        db.createObjectStore('chats', { keyPath: 'id' })
+    db: openDB<Schema>(`bubbles-${uid}`, 3, {
+      upgrade(db, from, _to, tx) {
+        // Before version 2 the local copy is started over; it is only a cache of the server.
+        if (from < 2) {
+          for (const name of db.objectStoreNames) db.deleteObjectStore(name)
+          db.createObjectStore('messages', { keyPath: ['chat', 'seq'] })
+          db.createObjectStore('outbox', { keyPath: 'cid' })
+          db.createObjectStore('inbox', { keyPath: 'chatId' })
+          db.createObjectStore('chats', { keyPath: 'id' })
+        }
+        // 3: the inbox and chats gained read state. Refetched; the outbox (unsent messages) is kept.
+        if (from === 2) {
+          void tx.objectStore('inbox').clear()
+          void tx.objectStore('chats').clear()
+        }
       },
       // Another tab is deleting this database (sign out) or upgrading it: let go, so it isn't left waiting.
       blocking(_current, _blocked, event) {

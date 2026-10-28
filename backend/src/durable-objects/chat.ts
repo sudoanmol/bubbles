@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 
-import { applyPatch, type ClientFrame, type Message } from '../protocol'
+import { applyPatch, type Message, type Read, type ServerFrame, type Write } from '../protocol'
 import { migrate } from './schema'
 
 const PAGE = 50
@@ -33,6 +33,7 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
        );
        -- The last seq each member's UserDO has stored. Fan-out sends everything after it, so it survives failures.
        CREATE TABLE IF NOT EXISTS delivery (user_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);`,
+      'ALTER TABLE member ADD COLUMN read_ts INTEGER NOT NULL DEFAULT 0;',
     ])
   }
 
@@ -45,12 +46,12 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
     for (const m of members) this.sql.exec('INSERT OR IGNORE INTO member (user_id) VALUES (?)', m)
   }
 
+  /** Every member and how far they've read, or null if `uid` isn't one. */
   members(uid: string) {
-    const ids = this.sql
-      .exec<{ user_id: string }>('SELECT user_id FROM member')
+    const rows = this.sql
+      .exec<{ user_id: string; read_seq: number; read_ts: number }>('SELECT user_id, read_seq, read_ts FROM member')
       .toArray()
-      .map((r) => r.user_id)
-    return ids.includes(uid) ? ids : null
+    return rows.some((r) => r.user_id === uid) ? rows : null
   }
 
   read(where: string, ...params: (string | number)[]) {
@@ -71,7 +72,7 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
    * an edit, delete or reaction updates the message in place and adds a patch entry carrying its new state. A refusal
    * is returned, not thrown, so the caller can tell it from a failure to reach this object.
    */
-  write(uid: string, f: ClientFrame): Message | { refused: string } {
+  write(uid: string, f: Write): Message | { refused: string } {
     if (!this.members(uid)) return { refused: 'Not a member of this chat' }
     // A retry of a stored frame: ack it again without a second fan-out.
     const [stored] = this.read('cid = ?', f.cid)
@@ -86,6 +87,8 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       if (f.reply && !quoted) return { refused: 'That message is gone' }
       const reply = quoted ? { seq: quoted.seq, sender: quoted.sender, body: quoted.body.slice(0, 200) } : null
       msg = { ...base, kind: 'text', body: f.body, reply, target: null, edited: null, deleted: false, reactions: {} }
+      // Writing in a chat means you've read it; others see "Read" from your reply without a separate receipt.
+      this.sql.exec('UPDATE member SET read_seq = ?, read_ts = ? WHERE user_id = ?', seq, base.ts, uid)
     } else {
       const [target] = this.read("seq = ? AND kind = 'text'", f.seq)
       if (!target) return { refused: 'That message is gone' }
@@ -118,6 +121,36 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
     void this.ctx.storage.setAlarm(Date.now() + RETRY_MS)
     void this.fanOut()
     return msg
+  }
+
+  /**
+   * Marks the chat read up to `seq` (never backwards, never past the end) and tells the other members' devices. Returns
+   * the reader's state for their own devices, so a retry after a lost answer gets the same reply.
+   * ponytail: receipts to others aren't retried; a device that misses one catches up when it next loads the chat.
+   */
+  markRead(uid: string, seq: number): Extract<ServerFrame, { t: 'read' }> | null {
+    const me = this.members(uid)?.find((m) => m.user_id === uid)
+    if (!me) return null
+    const end = this.sql.exec<{ seq: number }>('SELECT coalesce(max(seq), 0) AS seq FROM event').one().seq
+    let read: Read = { seq: me.read_seq, ts: me.read_ts }
+    if (Math.min(seq, end) > read.seq) {
+      read = { seq: Math.min(seq, end), ts: Date.now() }
+      this.sql.exec('UPDATE member SET read_seq = ?, read_ts = ? WHERE user_id = ?', read.seq, read.ts, uid)
+      const receipt = { t: 'read', chat: this.id, uid, ...read } as const
+      for (const m of this.members(uid)!)
+        if (m.user_id !== uid)
+          void this.env.USER.get(this.env.USER.idFromName(m.user_id))
+            .receipt(receipt)
+            .catch((error) => console.error('Receipt failed', error))
+    }
+    const { unread } = this.sql
+      .exec<{ unread: number }>(
+        "SELECT count(*) AS unread FROM event WHERE kind = 'text' AND sender != ? AND seq > ?",
+        uid,
+        read.seq
+      )
+      .one()
+    return { t: 'read', chat: this.id, uid, ...read, unread }
   }
 
   alarm() {

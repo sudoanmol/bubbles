@@ -16,6 +16,8 @@ export const inbox = new Hono<AppEnv>().get('/', async (c) => {
           chatId: r.chat_id,
           peer,
           lastSeq: r.last_seq,
+          readSeq: r.read_seq,
+          unread: r.unread,
           preview: r.preview && JSON.parse(r.preview),
           updatedAt: r.updated_at,
         },

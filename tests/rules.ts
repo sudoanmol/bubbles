@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict'
 
-import { nextPreview, type Message, type Text } from '../backend/src/protocol.ts'
+import { nextPreview, nextRead, type Message, type ReadState, type Text } from '../backend/src/protocol.ts'
 import { cursor, merge, withPending, type Pending } from '../frontend/src/lib/log.ts'
 
 const chat = 'c'
@@ -104,5 +104,15 @@ assert.equal(withPending(chat, [text(7, { cid: 'x3' })], outbox, uid).filter((m)
 
 // The cursor stops at the first gap: entries past it (live ones that beat the repair) don't move it.
 assert.equal(cursor([text(1), text(2), text(4)]), 2)
+
+// Unread counts: a message from someone else counts once, however often it's delivered; patches never count; a
+// message you send means you've read everything before it.
+const readAfter = (ms: Message[], from: ReadState = { lastSeq: 0, readSeq: 0, unread: 0 }) =>
+  ms.reduce((s, m) => nextRead(s, m, 'a'), from)
+const fromB = [text(1, { sender: 'b' }), text(2, { sender: 'b' })]
+assert.deepEqual(readAfter([...fromB, ...fromB, patch(3, 1, { body: 'x' })]), { lastSeq: 3, readSeq: 0, unread: 2 })
+assert.deepEqual(readAfter([...fromB, text(3), fromB[0]]), { lastSeq: 3, readSeq: 3, unread: 0 })
+// Read up to 1 already (a receipt beat the delivery): only 2 is unread.
+assert.equal(readAfter(fromB, { lastSeq: 0, readSeq: 1, unread: 0 }).unread, 1)
 
 console.log('PASS: log rules')

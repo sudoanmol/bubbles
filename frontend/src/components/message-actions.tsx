@@ -3,6 +3,7 @@ import { PencilIcon, ReplyIcon, SmilePlusIcon, Trash2Icon } from 'lucide-react'
 import { useState } from 'react'
 
 import type { LocalMessage } from '@/lib/log'
+import { formatTime } from '@/lib/time'
 
 const QUICK = ['👍', '❤️', '😂', '😮', '😢', '🔥']
 
@@ -11,7 +12,7 @@ const action = 'flex size-8 items-center justify-center rounded-full transition-
 
 /**
  * The toolbar beside a bubble (Paper: "Message actions"). It shows while the message is hovered or has focus (a tap
- * on touch screens), and turns into the quick reactions when you pick react.
+ * on touch screens), with the message's time beyond it, and turns into the quick reactions when you pick react.
  */
 export function MessageActions({
   message,
@@ -39,8 +40,8 @@ export function MessageActions({
       aria-label="Message actions"
       tabIndex={-1}
       className={cn(
-        'absolute top-1/2 z-10 -translate-y-1/2 transition-opacity duration-100',
-        mine ? 'right-full mr-2' : 'left-full ml-2',
+        'absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-2.5 transition-opacity duration-100',
+        mine ? 'right-full mr-2 flex-row-reverse' : 'left-full ml-2',
         reacting
           ? 'opacity-100'
           : 'pointer-events-none opacity-0 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100'
@@ -88,6 +89,11 @@ export function MessageActions({
             </>
           )}
         </div>
+      )}
+      {!reacting && (
+        <span className="text-xs leading-4 font-medium whitespace-nowrap text-muted-foreground">
+          {formatTime(message.ts)}
+        </span>
       )}
     </div>
   )

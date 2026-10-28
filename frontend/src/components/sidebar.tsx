@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
+import { cn } from 'cn'
 import { SearchIcon } from 'lucide-react'
 import { useState } from 'react'
 
@@ -71,7 +72,12 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
               <span className="truncate text-[15px] leading-[18px] font-semibold group-data-[status=active]:text-paper">
                 {item.peer.name}
               </span>
-              <span className="truncate text-sm leading-[18px] text-muted-foreground group-data-[status=active]:text-paper/65">
+              <span
+                className={cn(
+                  'truncate text-sm leading-[18px] text-muted-foreground group-data-[status=active]:text-paper/65',
+                  item.unread > 0 && 'font-medium text-ink'
+                )}
+              >
                 {!item.preview
                   ? `@${item.peer.username}`
                   : item.preview.deleted
@@ -79,9 +85,20 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
                     : `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`}
               </span>
             </div>
-            <span className="shrink-0 self-start pt-0.5 text-right text-xs whitespace-nowrap text-muted-foreground group-data-[status=active]:text-paper/65">
-              {item.preview && formatShort(item.updatedAt)}
-            </span>
+            <div className="flex w-11 shrink-0 flex-col items-end gap-1.5 self-start pt-0.5">
+              <span className="text-xs leading-4 whitespace-nowrap text-muted-foreground group-data-[status=active]:text-paper/65">
+                {item.preview && formatShort(item.updatedAt)}
+              </span>
+              {/* Paper: "/ (home)". The open chat is being read, so it never shows a count. */}
+              {item.unread > 0 && (
+                <span
+                  aria-label={`${item.unread} unread`}
+                  className="flex h-[22px] min-w-[22px] items-center justify-center rounded-full border-[1.5px] border-ink bg-sun px-[7px] text-xs leading-4 font-bold text-ink group-data-[status=active]:hidden"
+                >
+                  {item.unread > 99 ? '99+' : item.unread}
+                </span>
+              )}
+            </div>
           </Link>
         ))}
       </nav>

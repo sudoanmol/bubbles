@@ -51,9 +51,12 @@ export const ClientFrame = v.variant('t', [
   v.object({ t: v.literal('edit'), ...OnMessage, body: Body }),
   v.object({ t: v.literal('delete'), ...OnMessage }),
   v.object({ t: v.literal('react'), ...OnMessage, emoji: v.nullable(Emoji) }),
+  /** Read up to `seq`. Not stored in the outbox: the client sends it again whenever it reconnects with the chat open. */
+  v.object({ t: v.literal('read'), chat: ChatId, seq: Seq }),
 ])
 export type ClientFrame = v.InferOutput<typeof ClientFrame>
 export type Patch = Extract<ClientFrame, { t: 'edit' | 'delete' | 'react' }>
+export type Write = Exclude<ClientFrame, { t: 'read' }>
 
 /**
  * A message's state after a patch by `uid` at `ts`, or an error message if the patch is not allowed. The server
@@ -85,6 +88,18 @@ export const ServerFrame = v.variant('t', [
    * an error frame: the server closes the socket instead, and the client replays its outbox on reconnect.
    */
   v.object({ t: v.literal('error'), cid: v.optional(v.string()), message: v.string() }),
+  /**
+   * A member read a chat up to `seq` at `ts`. Sent to every member; the reader's own devices also get `unread`, the
+   * count of others' messages after `seq`, so reading on one device clears the badge on all of them.
+   */
+  v.object({
+    t: v.literal('read'),
+    chat: v.string(),
+    uid: v.string(),
+    seq: v.number(),
+    ts: v.number(),
+    unread: v.optional(v.number()),
+  }),
 ])
 export type ServerFrame = v.InferOutput<typeof ServerFrame>
 
@@ -105,12 +120,29 @@ export function nextPreview(cur: Preview | null, m: Message): Preview | null {
   return cur?.seq === m.target && m.seq > cur.rev ? { ...cur, body: m.body, deleted: m.deleted, rev: m.seq } : cur
 }
 
-export type InboxItem = {
+/** How far a user has read a chat, and how many messages from others came after that. */
+export type ReadState = { lastSeq: number; readSeq: number; unread: number }
+
+/**
+ * The read state after a log entry: a new message from someone else adds an unread one; a new message you sent means
+ * you've read the chat. Entries at or before `lastSeq` were counted already, so delivering one twice is safe. UserDO
+ * and the client both keep their inbox with it.
+ * ponytail: a message deleted while unread still counts until the next read.
+ */
+export function nextRead(s: ReadState, m: Message, uid: string): ReadState {
+  if (m.kind !== 'text' || m.seq <= s.lastSeq) return { ...s, lastSeq: Math.max(s.lastSeq, m.seq) }
+  if (m.sender === uid) return { lastSeq: m.seq, readSeq: m.seq, unread: 0 }
+  return { ...s, lastSeq: m.seq, unread: s.unread + (m.seq > s.readSeq ? 1 : 0) }
+}
+
+export type InboxItem = ReadState & {
   chatId: string
   peer: Profile
-  lastSeq: number
   preview: Preview | null
   updatedAt: number
 }
 
-export type Chat = { id: string; members: Profile[] }
+export type Read = { seq: number; ts: number }
+
+/** `reads`: how far each member has read, by user id. */
+export type Chat = { id: string; members: Profile[]; reads: Record<string, Read> }

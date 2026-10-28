@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import * as v from 'valibot'
 
-import { ClientFrame, nextPreview, type Message, type Preview, type ServerFrame } from '../protocol'
+import { ClientFrame, nextPreview, nextRead, type Message, type Preview, type ServerFrame } from '../protocol'
 import { migrate } from './schema'
 
 export type InboxRow = {
@@ -11,6 +11,9 @@ export type InboxRow = {
   /** JSON of a Preview. */
   preview: string | null
   updated_at: number
+  read_seq: number
+  /** Messages from others after `read_seq`. */
+  unread: number
 }
 
 /** One per user: holds every socket the user has open and their inbox. */
@@ -26,6 +29,8 @@ export class UserDO extends DurableObject<CloudflareBindings> {
          chat_id TEXT PRIMARY KEY, peer_id TEXT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0, preview TEXT,
          updated_at INTEGER NOT NULL
        );`,
+      `ALTER TABLE chat ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0;
+       ALTER TABLE chat ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;`,
     ])
   }
 
@@ -58,6 +63,7 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     } catch {
       return send(ws, { t: 'error', message: 'Invalid frame' })
     }
+    if (frame.t === 'read') return this.read(frame.chat, frame.seq)
     let result: Message | { refused: string }
     try {
       result = await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
@@ -70,21 +76,54 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     send(ws, 'refused' in result ? { t: 'error', cid: frame.cid, message: result.refused } : { t: 'ack', msg: result })
   }
 
+  /**
+   * Marks a chat read and brings every device of this user up to date. A failure is only logged: a read is not in the
+   * outbox, and the client sends it again when it reconnects with the chat open.
+   */
+  async read(chat: string, seq: number) {
+    try {
+      const state = await this.env.CHAT.get(this.env.CHAT.idFromName(chat)).markRead(this.uid, seq)
+      if (!state) return
+      this.sql.exec(
+        'UPDATE chat SET read_seq = ?, unread = ? WHERE chat_id = ? AND read_seq <= ?',
+        state.seq,
+        state.unread ?? 0,
+        chat,
+        state.seq
+      )
+      this.receipt(state)
+    } catch (error) {
+      console.error('Read failed', error)
+    }
+  }
+
+  /** Passes a read receipt to every device. Not stored: a device that misses one gets the reads with the chat. */
+  receipt(frame: Extract<ServerFrame, { t: 'read' }>) {
+    for (const ws of this.ctx.getWebSockets()) send(ws, frame)
+  }
+
   /** Called by ChatDO with a chat's next log entries, in order. Safe to call again with entries already stored. */
   deliver(entries: Message[], peer: string) {
     for (const msg of entries) {
       const row = this.sql.exec<InboxRow>('SELECT * FROM chat WHERE chat_id = ?', msg.chat).toArray()[0]
       const current: Preview | null = row?.preview ? JSON.parse(row.preview) : null
       const preview = nextPreview(current, msg)
+      const read = nextRead(
+        { lastSeq: row?.last_seq ?? 0, readSeq: row?.read_seq ?? 0, unread: row?.unread ?? 0 },
+        msg,
+        this.uid
+      )
       this.sql.exec(
-        `INSERT INTO chat (chat_id, peer_id, last_seq, preview, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (chat_id) DO UPDATE SET last_seq = max(last_seq, ?3), preview = ?4, updated_at = ?5`,
+        `INSERT INTO chat (chat_id, peer_id, last_seq, preview, updated_at, read_seq, unread) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (chat_id) DO UPDATE SET last_seq = ?3, preview = ?4, updated_at = ?5, read_seq = ?6, unread = ?7`,
         msg.chat,
         peer,
-        msg.seq,
+        read.lastSeq,
         preview && JSON.stringify(preview),
         // The chat moves up only for a new message, not for a change to an old one.
-        preview && preview.seq !== current?.seq ? msg.ts : (row?.updated_at ?? msg.ts)
+        preview && preview.seq !== current?.seq ? msg.ts : (row?.updated_at ?? msg.ts),
+        read.readSeq,
+        read.unread
       )
     }
     const frames = entries.map((msg) => JSON.stringify({ t: 'msg', msg } satisfies ServerFrame))

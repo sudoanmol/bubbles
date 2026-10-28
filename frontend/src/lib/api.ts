@@ -1,5 +1,13 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
-import { nextPreview, type Chat, type InboxItem, type Message, type Profile } from 'backend/protocol'
+import {
+  nextPreview,
+  nextRead,
+  type Chat,
+  type InboxItem,
+  type Message,
+  type Profile,
+  type ServerFrame,
+} from 'backend/protocol'
 
 import { cursor, merge } from './log'
 import {
@@ -121,16 +129,47 @@ export async function hydrateChat(queryClient: QueryClient, id: string) {
 /** A chat's log as this device holds it. */
 const local = async (chat: string) => merge([], await cachedMessages(chat, 2 * PAGE))
 
+/**
+ * Applies a read receipt: how far a member has read (shown as "Read" under your message), and for your own reads the
+ * chat's unread count, so reading on one device clears it on all of them.
+ */
+export function applyRead(queryClient: QueryClient, f: Extract<ServerFrame, { t: 'read' }>) {
+  queryClient.setQueryData<Chat>(chatQuery(f.chat).queryKey, (chat) => {
+    if (!chat || (chat.reads[f.uid]?.seq ?? 0) > f.seq) return chat
+    const updated = { ...chat, reads: { ...chat.reads, [f.uid]: { seq: f.seq, ts: f.ts } } }
+    void saveChat(updated)
+    return updated
+  })
+  if (f.unread === undefined) return
+  const unread = f.unread
+  setInboxItem(queryClient, f.chat, (item) => (item.readSeq > f.seq ? item : { ...item, readSeq: f.seq, unread }))
+}
+
+/** Clears a chat's unread count on this device at once, before the server confirms the read. */
+export const clearUnread = (queryClient: QueryClient, chat: string) =>
+  setInboxItem(queryClient, chat, (item) => (item.unread ? { ...item, unread: 0 } : item))
+
+function setInboxItem(queryClient: QueryClient, chat: string, update: (item: InboxItem) => InboxItem) {
+  queryClient.setQueryData<InboxItem[]>(inboxQuery.queryKey, (items) =>
+    items?.map((item) => {
+      if (item.chatId !== chat) return item
+      const updated = update(item)
+      if (updated !== item) void saveInboxItem(updated)
+      return updated
+    })
+  )
+}
+
 /** Adds entries to a chat's cached log, if the chat is in the cache. */
 export function upsertMessages(queryClient: QueryClient, chat: string, entries: Message[]) {
   queryClient.setQueryData<Message[]>(messagesQuery(chat).queryKey, (data) => data && merge(data, entries))
 }
 
 /**
- * Keeps the inbox in step with a live log entry, by the same rule as UserDO: a new message moves the chat to the top
- * as its preview; a change to the previewed message updates it. Returns false if the chat is not in the cache yet.
+ * Keeps the inbox in step with a live log entry, by the same rules as UserDO: a new message moves the chat to the top
+ * as its preview and counts as unread unless it's yours; a change to the previewed message updates it. Returns false if the chat is not in the cache yet.
  */
-export function bumpInbox(queryClient: QueryClient, msg: Message) {
+export function bumpInbox(queryClient: QueryClient, msg: Message, uid: string) {
   let found = false
   queryClient.setQueryData<InboxItem[]>(inboxQuery.queryKey, (items) => {
     const item = items?.find((i) => i.chatId === msg.chat)
@@ -141,7 +180,7 @@ export function bumpInbox(queryClient: QueryClient, msg: Message) {
     const newer = preview !== null && preview.seq !== item.preview?.seq
     const updated = {
       ...item,
-      lastSeq: Math.max(item.lastSeq, msg.seq),
+      ...nextRead(item, msg, uid),
       preview,
       updatedAt: newer ? msg.ts : item.updatedAt,
     }
