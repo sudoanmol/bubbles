@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { AuthHeading, AuthLayout, FormError } from '@/components/auth-layout'
 import { TextField } from '@/components/text-field'
 import { Button } from '@/components/ui/button'
+import { useDebounced } from '@/hooks/use-debounced'
 import { USERNAME_PATTERN, authClient, sessionQuery, suggestUsername, unwrap } from '@/lib/auth'
 
 export const Route = createFileRoute('/login/username')({
@@ -111,13 +112,4 @@ function Availability({ checking, valid, available }: { checking: boolean; valid
       taken
     </span>
   )
-}
-
-function useDebounced<T>(value: T, ms: number) {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), ms)
-    return () => clearTimeout(id)
-  }, [value, ms])
-  return debounced
 }

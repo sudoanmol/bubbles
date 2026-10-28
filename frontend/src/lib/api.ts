@@ -1,5 +1,5 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
-import type { Chat, InboxItem, Message, MessagePage } from 'backend/protocol'
+import type { Chat, InboxItem, Message, MessagePage, Profile } from 'backend/protocol'
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, init)
@@ -25,6 +25,13 @@ export const messagesQuery = (id: string) =>
     queryKey: ['messages', id],
     queryFn: () => api<MessagePage>(`/chats/${id}/messages`) as Promise<Messages>,
     staleTime: Infinity,
+  })
+
+export const searchUsersQuery = (q: string) =>
+  queryOptions({
+    queryKey: ['users', q],
+    queryFn: () => api<Profile[]>(`/users?q=${encodeURIComponent(q)}`),
+    staleTime: 30_000,
   })
 
 export const openDm = (username: string) => api<{ chatId: string }>(`/dms/${username}`, { method: 'POST' })

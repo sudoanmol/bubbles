@@ -6,6 +6,7 @@ import type { AppEnv } from './env'
 import { chats } from './routes/chats'
 import { dms } from './routes/dms'
 import { inbox } from './routes/inbox'
+import { users } from './routes/users'
 import { ws } from './routes/ws'
 
 export { ChatDO } from './durable-objects/chat'
@@ -27,6 +28,7 @@ app.route('/ws', ws)
 app.route('/inbox', inbox)
 app.route('/dms', dms)
 app.route('/chats', chats)
+app.route('/users', users)
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ message: err.message }, err.status)

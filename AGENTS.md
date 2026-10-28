@@ -11,11 +11,12 @@ pnpm workspace (never npm or bun):
 ```
 backend/    Worker `bubbles-api` (private): Hono, auth, API, Durable Objects
   src/index.ts            app wiring: auth mount, session middleware, route mounts, DO exports
-  src/routes/             one Hono router per resource (ws, inbox, dms, chats)
+  src/routes/             one Hono router per resource (ws, inbox, dms, chats, users)
   src/durable-objects/    UserDO (user.ts), ChatDO (chat.ts)
   src/protocol.ts         wire protocol shared with the frontend (`import … from 'backend/protocol'`)
 frontend/   Worker `bubbles` (public): TanStack Start, React 19, Tailwind v4, TanStack Query, shadcn (Base UI)
   src/routes/_app*        signed-in shell (inbox + open chat); `/`, `/c/$chatId`, `/@{$username}`
+  src/hooks/              shared React hooks
   src/lib/                api + query cache helpers, socket client, auth, time formatting
   src/components/ui/      shadcn components; we own and restyle them
 .env        the only env file, shared by every package (copy from .env.example)
