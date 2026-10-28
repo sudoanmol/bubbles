@@ -1,10 +1,13 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/bricolage-grotesque/opsz.css';
 
 /* Tokens mirror the Paper file "Bubbles". */
 @theme {
   --color-paper: #ffffff;
   --color-ink: #121212;
-  --color-muted: #6a6a6a;
   --color-line: #ededed;
   --color-wash: #f6f6f4;
   --color-sun: #ffd43b;
@@ -13,8 +16,9 @@
   --color-danger: #e5383b;
   --color-mint: #1fae6b;
 
-  --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
-  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-display);
 
   --radius-bubble: 22px;
 
@@ -22,15 +26,41 @@
   --shadow-sticker-sun: 3px 3px 0 var(--color-sun);
 }
 
-html,
-body {
-  min-height: 100%;
+/* shadcn's semantic tokens, mapped onto the palette above. */
+@theme inline {
+  --color-background: var(--color-paper);
+  --color-foreground: var(--color-ink);
+  --color-card: var(--color-paper);
+  --color-card-foreground: var(--color-ink);
+  --color-popover: var(--color-paper);
+  --color-popover-foreground: var(--color-ink);
+  --color-primary: var(--color-ink);
+  --color-primary-foreground: var(--color-paper);
+  --color-secondary: var(--color-wash);
+  --color-secondary-foreground: var(--color-ink);
+  --color-muted: var(--color-wash);
+  --color-muted-foreground: #6a6a6a;
+  --color-accent: var(--color-sun);
+  --color-accent-foreground: var(--color-ink);
+  --color-destructive: var(--color-danger);
+  --color-border: var(--color-line);
+  --color-input: var(--color-line);
+  --color-ring: var(--color-cobalt);
 }
 
-body {
-  margin: 0;
-  background-color: var(--color-paper);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    min-height: 100%;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
 }

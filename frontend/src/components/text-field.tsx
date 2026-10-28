@@ -18,13 +18,13 @@ export function TextField({
         <input
           id={id}
           aria-describedby={hint ? `${id}-hint` : undefined}
-          className="h-full min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted"
+          className="h-full min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
           {...props}
         />
         {trailing}
       </div>
       {hint && (
-        <p id={`${id}-hint`} className="text-sm text-muted">
+        <p id={`${id}-hint`} className="text-sm text-muted-foreground">
           {hint}
         </p>
       )}

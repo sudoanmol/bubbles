@@ -1,10 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 
-import { AuthHeading, AuthLayout, FormError } from '#/components/auth-layout'
-import { Button } from '#/components/button'
-import { TextField } from '#/components/text-field'
-import { authClient, sessionQuery, unwrap } from '#/lib/auth'
+import { AuthHeading, AuthLayout, FormError } from '@/components/auth-layout'
+import { TextField } from '@/components/text-field'
+import { Button } from '@/components/ui/button'
+import { authClient, sessionQuery, unwrap } from '@/lib/auth'
 
 type Mode = 'signin' | 'signup'
 
@@ -81,7 +81,7 @@ function Login() {
 
       <div className="flex items-center gap-3.5">
         <div className="h-px flex-1 bg-line" />
-        <span className="text-xs font-medium tracking-[0.08em] text-muted uppercase">or</span>
+        <span className="text-xs font-medium tracking-[0.08em] text-muted-foreground uppercase">or</span>
         <div className="h-px flex-1 bg-line" />
       </div>
 
@@ -105,7 +105,7 @@ function Login() {
                 minLength={3}
                 maxLength={30}
                 pattern="[A-Za-z0-9_.]+"
-                leading={<span className="text-lg font-semibold text-muted">@</span>}
+                leading={<span className="text-lg font-semibold text-muted-foreground">@</span>}
               />
             </>
           ) : (
@@ -127,7 +127,7 @@ function Login() {
           <Button type="submit" disabled={submit.isPending}>
             {signup ? 'Create account' : 'Sign in'}
           </Button>
-          <p className="text-center text-[15px] text-muted">
+          <p className="text-center text-[15px] text-muted-foreground">
             {signup ? 'Already have an account? ' : 'New here? '}
             <Link
               to="/login"

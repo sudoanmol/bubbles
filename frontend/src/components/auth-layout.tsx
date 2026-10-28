@@ -48,7 +48,7 @@ export function AuthHeading({ title, subtitle }: { title: string; subtitle: stri
   return (
     <div className="flex flex-col gap-2">
       <h2 className="font-display text-[40px] leading-[44px] font-extrabold tracking-[-0.03em]">{title}</h2>
-      <p className="text-base leading-6 text-muted">{subtitle}</p>
+      <p className="text-base leading-6 text-muted-foreground">{subtitle}</p>
     </div>
   )
 }

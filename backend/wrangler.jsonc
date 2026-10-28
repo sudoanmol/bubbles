@@ -16,4 +16,11 @@
       "migrations_dir": "drizzle",
     },
   ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "USER", "class_name": "UserDO" },
+      { "name": "CHAT", "class_name": "ChatDO" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserDO", "ChatDO"] }],
 }

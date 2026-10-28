@@ -1,0 +1,25 @@
+import { Hono } from 'hono'
+
+import { profiles } from '../db/profiles'
+import { userDO, type AppEnv } from '../env'
+import type { InboxItem } from '../protocol'
+
+export const inbox = new Hono<AppEnv>().get('/', async (c) => {
+  const rows = await userDO(c.env, c.var.uid).inbox()
+  const people = await profiles(c.env.DB, [...new Set(rows.map((r) => r.peer_id))])
+  return c.json(
+    rows.flatMap((r): InboxItem[] => {
+      const peer = people.get(r.peer_id)
+      if (!peer) return []
+      return [
+        {
+          chatId: r.chat_id,
+          peer,
+          lastSeq: r.last_seq,
+          preview: r.preview_body === null ? null : { sender: r.preview_sender!, body: r.preview_body },
+          updatedAt: r.updated_at,
+        },
+      ]
+    })
+  )
+})

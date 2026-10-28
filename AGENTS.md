@@ -10,7 +10,14 @@ pnpm workspace (never npm or bun):
 
 ```
 backend/    Worker `bubbles-api` (private): Hono, auth, API, Durable Objects
-frontend/   Worker `bubbles` (public): TanStack Start, React 19, Tailwind v4, TanStack Query
+  src/index.ts            app wiring: auth mount, session middleware, route mounts, DO exports
+  src/routes/             one Hono router per resource (ws, inbox, dms, chats)
+  src/durable-objects/    UserDO (user.ts), ChatDO (chat.ts)
+  src/protocol.ts         wire protocol shared with the frontend (`import … from 'backend/protocol'`)
+frontend/   Worker `bubbles` (public): TanStack Start, React 19, Tailwind v4, TanStack Query, shadcn (Base UI)
+  src/routes/_app*        signed-in shell (inbox + open chat); `/`, `/c/$chatId`, `/@{$username}`
+  src/lib/                api + query cache helpers, socket client, auth, time formatting
+  src/components/ui/      shadcn components; we own and restyle them
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
@@ -61,18 +68,19 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 
 ### Stack
 
-| Layer                  | Choice                                                                                               |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| Frontend               | TanStack Start + Router, React 19 + Compiler, Tailwind v4                                            |
-| Client data            | TanStack Query (all server state), Dexie for IndexedDB (phase 2), TanStack Virtual for message lists |
-| Socket client          | `partysocket` (reconnect with backoff)                                                               |
-| API                    | Hono, with the `hc` typed RPC client                                                                 |
-| Protocol               | Valibot schemas in a shared module; every WebSocket frame is parsed on both sides                    |
-| Auth                   | Better Auth on D1 via the Drizzle adapter: email/password, username plugin, Google OAuth             |
-| Storage                | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2                            |
-| Async                  | Queues → Web Push (VAPID)                                                                            |
-| Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine                                                |
-| Tooling                | oxlint, oxfmt, husky + lint-staged                                                                   |
+| Layer                  | Choice                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------ |
+| Frontend               | TanStack Start + Router, React 19 + Compiler, Tailwind v4                                        |
+| Client data            | TanStack Query (all server state), Dexie for IndexedDB (phase 2)                                 |
+| UI kit                 | shadcn on Base UI (`Message`, `Bubble`, `MessageScroller`, `Dialog`), lucide icons               |
+| Socket client          | `partysocket` (reconnect with backoff)                                                           |
+| API                    | Hono, one router per resource in `backend/src/routes/`                                           |
+| Protocol               | Valibot schemas and response types in `backend/src/protocol.ts`; frames are parsed on both sides |
+| Auth                   | Better Auth on D1 via the Drizzle adapter: email/password, username plugin, Google OAuth         |
+| Storage                | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2                        |
+| Async                  | Queues → Web Push (VAPID)                                                                        |
+| Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine                                            |
+| Tooling                | oxlint, oxfmt, husky + lint-staged                                                               |
 
 ## Auth
 
@@ -160,7 +168,7 @@ Out of scope on purpose: end-to-end encryption (it would rule out server-side se
 
 ## UI
 
-Designs live in the Paper file "Bubbles". Build to those designs: the style is clean, fun and playful, and the app should feel good to use. Pull exact values with Paper's `get_jsx` and `get_computed_styles`, never from screenshots. Shared color, type and radius tokens live in `frontend/src/styles.css` as a Tailwind v4 `@theme`.
+Designs live in the Paper file "Bubbles". Build to those designs: the style is clean, fun and playful, and the app should feel good to use. Pull exact values with Paper's `get_jsx` and `get_computed_styles`, never from screenshots. Shared color, type and radius tokens live in `frontend/src/styles.css` as a Tailwind v4 `@theme`; shadcn's semantic tokens (`primary`, `muted-foreground`, …) map onto that palette in the `@theme inline` block. Add shadcn components with `pnpm dlx shadcn@latest add <name>` in `frontend/`, then restyle them to the Paper design. Import app code with the `@/` alias. Fonts are self-hosted through Fontsource.
 
 ## Deploy
 

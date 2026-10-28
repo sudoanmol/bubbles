@@ -2,6 +2,9 @@
   "name": "backend",
   "private": true,
   "type": "module",
+  "exports": {
+    "./protocol": "./src/protocol.ts"
+  },
   "scripts": {
     "dev": "pnpm db:migrate && node --watch-path=../.env --watch-preserve-output node_modules/wrangler/bin/wrangler.js dev --env-file ../.env",
     "deploy": "wrangler deploy --minify",
@@ -16,7 +19,8 @@
     "@better-auth/drizzle-adapter": "^1.7.14",
     "better-auth": "^1.7.14",
     "drizzle-orm": "^0.45.4",
-    "hono": "^4.13.14"
+    "hono": "^4.13.14",
+    "valibot": "^1.5.0"
   },
   "devDependencies": {
     "auth": "^1.7.14",

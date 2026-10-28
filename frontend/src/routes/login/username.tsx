@@ -2,10 +2,10 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 
-import { AuthHeading, AuthLayout, FormError } from '#/components/auth-layout'
-import { Button } from '#/components/button'
-import { TextField } from '#/components/text-field'
-import { USERNAME_PATTERN, authClient, sessionQuery, suggestUsername, unwrap } from '#/lib/auth'
+import { AuthHeading, AuthLayout, FormError } from '@/components/auth-layout'
+import { TextField } from '@/components/text-field'
+import { Button } from '@/components/ui/button'
+import { USERNAME_PATTERN, authClient, sessionQuery, suggestUsername, unwrap } from '@/lib/auth'
 
 export const Route = createFileRoute('/login/username')({
   beforeLoad: async ({ context }) => {
@@ -68,7 +68,7 @@ function ChooseUsername() {
           required
           value={username}
           onChange={(e) => setUsername(e.target.value.replace(/\s/g, ''))}
-          leading={<span className="text-lg font-semibold text-muted">@</span>}
+          leading={<span className="text-lg font-semibold text-muted-foreground">@</span>}
           trailing={
             <Availability
               checking={availability.isFetching || username.toLowerCase() !== debounced}
