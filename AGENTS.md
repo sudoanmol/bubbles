@@ -9,26 +9,26 @@ Build it in layers. Every phase below ends with something that works end to end 
 pnpm workspace (never npm or bun):
 
 ```
-backend/    Hono Worker: auth, API, Durable Objects
-frontend/   TanStack Start on Workers: React 19, Tailwind v4, TanStack Query
+backend/    Worker `bubbles-api` (private): Hono, auth, API, Durable Objects
+frontend/   Worker `bubbles` (public): TanStack Start, React 19, Tailwind v4, TanStack Query
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
-| Task                 | Command (from the root)                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------- |
-| Install              | `pnpm install`                                                                              |
-| Dev (both workers)   | `pnpm dev` (frontend on :3100, backend on :8790)                                            |
-| Typecheck            | `pnpm typecheck`                                                                            |
-| Build                | `pnpm build`                                                                                |
-| Lint / format        | `pnpm lint`, `pnpm format` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged) |
-| Worker binding types | `pnpm -C backend cf-typegen` after editing `wrangler.jsonc`                                 |
+| Task                 | Command (from the root)                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| Install              | `pnpm install`                                                                           |
+| Dev (both workers)   | `pnpm dev` (app on :3100, API on :8790; the API restarts when `.env` changes)            |
+| Typecheck            | `pnpm typecheck`                                                                         |
+| Build                | `pnpm build`                                                                             |
+| Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged) |
+| Worker binding types | `pnpm -C <pkg> cf-typegen` after editing that package's `wrangler.jsonc`                 |
 
 Assume the dev server is already running. Verify work with `pnpm typecheck` and `pnpm build`.
 
 ### Conventions
 
 - Add dependencies with `pnpm -C <pkg> add`. Never edit manifests by hand to add one.
-- Secrets and config live in the root `.env`. The backend loads it with `wrangler dev --env-file ../.env`. In production, use `wrangler secret put`. Add every new key to `.env.example`.
+- Secrets and config live in the root `.env`. The backend loads it with `wrangler dev --env-file ../.env`, wrapped in `node --watch-path` because wrangler does not watch env files. In production, use `wrangler secret put`. Add every new key to `.env.example`.
 - Database access goes through Drizzle ORM. The Better Auth tables are generated, so never hand-edit them (see Auth).
 - Parse all external input at the boundary: HTTP bodies, WebSocket frames, env.
 - Do not keep backward compatibility. This is a rewrite, so delete obsolete paths.
@@ -38,10 +38,11 @@ Assume the dev server is already running. Verify work with `pnpm typecheck` and 
 
 ```
 Browser (IndexedDB cache, outbox, seq cursors, 1 WebSocket)
-   │ same origin: app.domain/*  → frontend Worker (TanStack Start, static assets)
-   │              app.domain/api/* → backend Worker (Hono)
+   │ one public origin: bubbles.sudoanmol.workers.dev
    ▼
-backend Worker ── auth (Better Auth + D1), routing
+bubbles (frontend Worker) ── TanStack Start, static assets; /api/* → service binding `API`
+   ▼
+bubbles-api (backend Worker, no public URL) ── auth (Better Auth + D1), routing
    │ WebSocket (hibernating)
    ▼
 UserDO (1 per user)  ── holds the user's sockets, inbox, unread counts, push subscriptions
@@ -55,7 +56,7 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 - **ChatDO is the single source of truth for a chat.** A Durable Object handles one request at a time, so every chat gets a strict total order for free: a monotonic `seq` per chat, with no locks and no Redis.
 - **WebSocket Hibernation API** (`ctx.acceptWebSocket`). Idle sockets cost nothing.
 - **D1 holds only global data:** users, sessions, accounts, handles, user search. Chat data never goes into D1. It lives in each ChatDO's own durable SQLite database, which has 30-day point-in-time recovery. Cross-chat queries (global search, deleting a user's data) fan out over the user's inbox. Analytics comes from copying events to Analytics Engine or Queues, never from querying live chat databases.
-- **Same origin.** In production, both Workers are routed on one domain. In dev, Vite proxies `/api` to `:8790`. Cookie auth therefore needs no CORS.
+- **One origin, private API.** `frontend/src/server.ts` forwards `/api/*` to `bubbles-api` over the `API` service binding (no network hop). The API Worker has `workers_dev: false`, so it has no public URL. Cookie auth needs no CORS and no custom domain. The same path runs in dev: the Vite plugin reaches the local `wrangler dev` through the dev registry.
 - **SSR is off** (`defaultSsr: false` in `frontend/src/start.ts`). The app renders on the client from the local cache. The server renders only the HTML shell.
 
 ### Stack
@@ -84,11 +85,15 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 
 ### Routes
 
-| Path              | Who can see it                     | Purpose                                                 |
-| ----------------- | ---------------------------------- | ------------------------------------------------------- |
-| `/login`          | Signed-out users                   | Sign in (email or username + password), sign up, Google |
-| `/login/username` | Signed-in users without a username | Choose a username                                       |
-| `/`               | Signed-in users with a username    | Home: inbox and chats                                   |
+| Path              | Who can see it                     | Purpose                                                                |
+| ----------------- | ---------------------------------- | ---------------------------------------------------------------------- |
+| `/login`          | Signed-out users                   | Sign in (email or username + password), sign up, Google                |
+| `/login/username` | Signed-in users without a username | Choose a username                                                      |
+| `/`               | Signed-in users with a username    | Home: inbox and chats                                                  |
+| `/c/$chatId`      | Chat members                       | A chat (DM or group); the canonical chat URL                           |
+| `/@$username`     | Signed-in users                    | Opens or creates the DM with that user, then redirects to `/c/$chatId` |
+
+Chat URLs use the permanent chat id. Group names and usernames can change and group names are not unique, so they are never part of a canonical URL; `/@username` is only a redirect.
 
 ## Delivery protocol (the core of the project)
 
@@ -156,3 +161,13 @@ Out of scope on purpose: end-to-end encryption (it would rule out server-side se
 ## UI
 
 Designs live in the Paper file "Bubbles". Build to those designs: the style is clean, fun and playful, and the app should feel good to use. Pull exact values with Paper's `get_jsx` and `get_computed_styles`, never from screenshots. Shared color, type and radius tokens live in `frontend/src/styles.css` as a Tailwind v4 `@theme`.
+
+## Deploy
+
+Production is `https://bubbles.sudoanmol.workers.dev`. Deploy `backend` before `frontend`, because the service binding needs `bubbles-api` to exist.
+
+1. `pnpm -C backend db:migrate:remote`
+2. Secrets, once per Worker change: `wrangler secret put <KEY>` in `backend/` for `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` (`https://bubbles.sudoanmol.workers.dev`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+3. `pnpm -C backend deploy`, then `pnpm -C frontend deploy`
+
+Google's OAuth client must list `https://bubbles.sudoanmol.workers.dev/api/auth/callback/google` as a redirect URI.
