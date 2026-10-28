@@ -1,0 +1,9 @@
+packages:
+  - backend
+  - frontend
+
+allowBuilds:
+  esbuild: true
+  lightningcss: true
+  sharp: true
+  workerd: true
