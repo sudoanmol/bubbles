@@ -1,9 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { MAX_BODY } from 'backend/protocol'
+import { cn } from 'cn'
 import { ArrowUpIcon, PlusIcon, SmileIcon } from 'lucide-react'
 import { lazy, Suspense, useRef, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
 import { sendMessage } from '@/lib/socket'
 
 // The picker (Base UI Popover + frimousse) loads on first hover or focus of its button, not with the chat.
@@ -45,18 +45,16 @@ export function Composer({ chatId, uid, placeholder }: { chatId: string; uid: st
         send()
       }}
     >
-      <div className="flex items-end gap-2.5">
+      <div className="flex items-end gap-3">
         {/* ponytail: no upload yet; images arrive in phase 4 (direct-to-R2 uploads). */}
-        <Button
+        <button
           type="button"
-          variant="sticker"
-          size="icon"
           aria-label="Add image"
-          className="mb-1.5 size-11 rounded-full shadow-[2px_2px_0_var(--color-ink)] hover:bg-sun"
+          className="relative -top-1 flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-paper shadow-[2px_2px_0_var(--color-ink)] transition-[translate,box-shadow,background-color] duration-100 hover:bg-sun active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
         >
           <PlusIcon className="size-5" strokeWidth={2.75} />
-        </Button>
-        <div className="flex min-w-0 flex-1 items-end gap-1 rounded-[18px] border-2 border-ink bg-paper py-2 pr-2 pl-4 shadow-sticker">
+        </button>
+        <div className="flex min-h-14 min-w-0 flex-1 items-end gap-1 rounded-[28px] border-2 border-ink bg-paper py-1.5 pr-1.5 pl-5 shadow-sticker">
           <textarea
             ref={input}
             aria-label={placeholder}
@@ -78,7 +76,10 @@ export function Composer({ chatId, uid, placeholder }: { chatId: string; uid: st
             type="button"
             aria-label="Emoji"
             aria-expanded={emojiOpen}
-            className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-ink aria-expanded:text-ink"
+            className={cn(
+              'mb-0.5 flex size-10 shrink-0 items-center justify-center rounded-full transition-colors hover:text-ink aria-expanded:bg-wash aria-expanded:text-ink',
+              body ? 'text-ink' : 'text-muted-foreground'
+            )}
             onPointerEnter={() => void loadEmojiPicker()}
             onFocus={() => void loadEmojiPicker()}
             onClick={() => {
@@ -93,9 +94,15 @@ export function Composer({ chatId, uid, placeholder }: { chatId: string; uid: st
               <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} anchor={emojiButton} onPick={insert} />
             </Suspense>
           )}
-          <Button type="submit" variant="sun" size="icon" aria-label="Send" disabled={!body.trim()} className="size-11">
+          {/* Lights up (sun) only when there is something to send. */}
+          <button
+            type="submit"
+            aria-label="Send"
+            disabled={!body.trim()}
+            className="mb-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-sun text-ink transition-colors disabled:cursor-default disabled:border-transparent disabled:bg-wash disabled:text-[#b5b5b5]"
+          >
             <ArrowUpIcon className="size-[18px]" strokeWidth={2.75} />
-          </Button>
+          </button>
         </div>
       </div>
     </form>
