@@ -21,16 +21,17 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from '@/components/ui/message-scroller'
-import { api, chatQuery, hydrateChat, merge, messagesQuery, PAGE, type LocalMessage } from '@/lib/api'
+import { api, chatQuery, hydrateChat, messagesQuery, outboxQuery, PAGE, upsertMessages } from '@/lib/api'
+import { withPending, type LocalMessage } from '@/lib/log'
 import { discardMessage, patchMessage, retryMessage, useConnection } from '@/lib/socket'
-import { cachedOlder, saveMessages } from '@/lib/store'
+import { cachedOlder, checkAccount, currentUid, saveMessages } from '@/lib/store'
 import { formatDay, formatTime } from '@/lib/time'
 
 export const Route = createFileRoute('/_app/c/$chatId')({
   // The local copy renders first; the network only blocks a chat this device has never opened.
   loader: async ({ context: { queryClient }, params: { chatId } }) => {
     await hydrateChat(queryClient, chatId)
-    await queryClient.ensureQueryData(chatQuery(chatId))
+    await queryClient.query({ ...chatQuery(chatId), staleTime: 'static' })
   },
   component: ChatView,
   errorComponent: ErrorState,
@@ -89,8 +90,8 @@ function MessageList({
 }) {
   const queryClient = useQueryClient()
   const { data: log } = useSuspenseQuery(messagesQuery(chatId))
-  // Patches stay in the log (they keep the cursor's run unbroken) but are already folded into their messages.
-  const messages = log.filter((m) => m.kind === 'text')
+  const { data: outbox } = useSuspenseQuery(outboxQuery)
+  const messages = withPending(chatId, log, outbox, uid)
   const lastMine = messages.findLast((m) => m.sender === uid && !m.deleted)
   const { scrollToMessage } = useMessageScroller()
 
@@ -276,24 +277,33 @@ function Status({ message }: { message: LocalMessage }) {
 }
 
 /** Loads the previous page when the user scrolls to the top: from the local copy if it has it, else the server. */
-function LoadOlder({ chatId, messages }: { chatId: string; messages: LocalMessage[] }) {
+function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] }) {
   const queryClient = useQueryClient()
-  const oldest = messages.find((m) => m.seq !== null)?.seq ?? undefined
+  const connection = useConnection()
+  const oldest = messages[0]?.seq
   const hasOlder = oldest !== undefined && oldest > 1
 
   const load = useMutation({
     mutationFn: async (before: number) => {
       const local = await cachedOlder(chatId, before, PAGE)
       if (local.length) return local
+      const uid = currentUid()
       const page = await api<Stored[]>(`/chats/${chatId}/messages?before=${before}`)
+      checkAccount(uid)
       void saveMessages(chatId, page)
       return page
     },
+    // A few tries, then it waits for the connection to come back rather than asking again while the line stays put.
+    retry: 2,
     onSuccess: (page) => {
       load.reset()
-      queryClient.setQueryData<LocalMessage[]>(messagesQuery(chatId).queryKey, (cur) => cur && merge(cur, page))
+      upsertMessages(queryClient, chatId, page)
     },
   })
+
+  useEffect(() => {
+    if (connection === 'online' && load.isError) load.reset()
+  }, [connection, load])
 
   // Loads when this line at the top of the list is actually on screen, not merely before the scroller has measured.
   const [onScreen, setOnScreen] = useState(false)

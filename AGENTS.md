@@ -19,9 +19,12 @@ frontend/   Worker `bubbles` (public): single-page app on TanStack Router, React
   src/worker.ts           the Worker: static assets first, then /api/* → `API` service binding
   src/routes/_app*        signed-in shell (inbox + open chat); `/`, `/c/$chatId`, `/@{$username}`
   src/hooks/              shared React hooks
-  src/lib/                api + sync (api.ts), IndexedDB store (store.ts), socket + outbox (socket.ts), session, auth, time
-tests/chaos.ts  chaos test for the delivery protocol (`pnpm chaos`)
+  src/lib/                api + sync (api.ts), pure log rules (log.ts), IndexedDB store (store.ts), socket + outbox (socket.ts), session, auth, time
   src/components/ui/      shadcn components; we own and restyle them
+tests/chaos.ts  chaos test for the delivery protocol (`pnpm chaos`)
+tests/rules.ts  the pure log and inbox rules under every arrival order
+tests/store.ts  the IndexedDB store (fake-indexeddb): rev guard, outbox across reloads, sign-out with two tabs open
+backend/test/   Durable Objects in the Workers runtime (@cloudflare/vitest-plugin): fan-out after failure and eviction
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
@@ -31,6 +34,7 @@ tests/chaos.ts  chaos test for the delivery protocol (`pnpm chaos`)
 | Chaos test           | `pnpm chaos` with `pnpm dev` running (edits and reverts `backend/src/index.ts` to redeploy mid-run; `REDEPLOY=0` skips that) |
 | Sign in as any user  | Open `http://localhost:3100/api/dev/login/<username>` (local only; for testing two accounts side by side)                    |
 | Dev (both workers)   | `pnpm dev` (app on :3100, API on :8790; the API restarts when `.env` changes)                                                |
+| Test                 | `pnpm test`                                                                                                                  |
 | Typecheck            | `pnpm typecheck`                                                                                                             |
 | Build                | `pnpm build`                                                                                                                 |
 | Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged)                                     |
@@ -45,6 +49,7 @@ Assume the dev server is already running. Verify work with `pnpm typecheck` and 
 - Database access goes through Drizzle ORM. The Better Auth tables are generated, so never hand-edit them (see Auth).
 - Parse all external input at the boundary: HTTP bodies, WebSocket frames, env.
 - Do not keep backward compatibility. This is a rewrite, so delete obsolete paths.
+- When a change adds or fixes a rule that could quietly break later (ordering, idempotency, revisions, retries, account and tab lifecycle), add a check to the matching test file: `tests/rules.ts` for pure rules, `tests/store.ts` for the device store, `backend/test/` for Durable Objects. Make sure it fails without the change. Test only what could regress unnoticed; skip the obvious (plain wiring, UI markup, what the type checker already catches).
 - Prefer platform primitives (Durable Objects, D1, R2, Queues, Rate Limiting binding) over adding services.
 
 ## Architecture
@@ -123,8 +128,10 @@ client                          UserDO                    ChatDO
   │◀──────────────────────────────│ bump unread; push to sockets, or enqueue a web push
 ```
 
-- **Idempotent sends.** The client generates `cid` (a ULID) and writes the message to its outbox (IndexedDB) before sending. `UNIQUE(cid)` in ChatDO makes retries harmless. The outbox is replayed, in write order, on every connect, so it survives going offline and reloads. UserDO handles a socket's frames one at a time so a replayed burst keeps its order.
+- **Idempotent sends.** The client generates `cid` (a ULID) and writes the message to its outbox (IndexedDB) before sending: one queue stores each frame, then sends it, so nothing goes out before it is stored or ahead of an older frame. `UNIQUE(cid)` in ChatDO makes retries harmless. The outbox is replayed, in write order, on every connect, so it survives going offline and reloads. UserDO handles a socket's frames one at a time so a replayed burst keeps its order.
 - **Gap detection.** A chat's cursor is the end of the unbroken run of `seq`s the client holds. Syncing a chat is `GET /api/chats/:id/messages?after=<cursor>`; if the client is more than a page behind, the server returns the latest page instead and the client drops its older copy, so what it stores is always one unbroken run. A live message past a gap shows at once and triggers a sync of that chat if it's on screen. On reconnect the client refetches the inbox and syncs the chats on screen; other chats sync when opened.
+- **Refused versus failed.** ChatDO returns a refusal (not a member, message gone, not yours); UserDO sends it as an `error` frame and the client stops retrying. Any other failure (ChatDO unreachable, outcome unknown) closes the socket, and the client reconnects and replays its outbox with the same `cid`s. UserDO skips later frames from a closing socket so they can't overtake the failed one.
+- **Durable fan-out.** ChatDO keeps `delivery(user_id, seq)`, the last entry each member's UserDO stored, and fans out everything after it, in order, in batches. An alarm set with every write retries members that failed, or finishes a fan-out cut short by an eviction or a deploy. UserDO applies entries idempotently (`nextPreview` in `protocol.ts`, shared with the client).
 - **Deploys are routine.** A deploy drops sockets. The client reconnects, replays its outbox and fills any gaps.
 - **Edits, deletes and reactions** are log entries too (`kind: 'patch'`) with their own `seq`, so gap repair covers them. ChatDO updates the message in place and appends a patch carrying the message's new state; every copy keeps whichever state has the higher `rev` (the seq of its last change), so patches apply idempotently and in any order. Deletes are tombstones. `applyPatch` in `protocol.ts` is the one rule for what a change does: the server stores with it, the client shows its own unsent changes with it. A refused message stays as "Not sent"; a refused change is dropped and the message reverts.
 - **Ephemeral events** (typing, presence) travel the same path but are never stored. Typing is throttled to one event every 3 seconds.
@@ -132,11 +139,11 @@ client                          UserDO                    ChatDO
 
 ### Data model
 
-- **Client (IndexedDB, one database per account, `bubbles-<uid>`):** `messages` (the log, keyed `[chat, seq]`, patches included), `outbox` (unacked frames, by `cid`), `inbox`, `chats`. TanStack Query is the store the UI reads; every change is written through, and the cache is filled from here on start so the app renders before the network answers. The session is remembered in `localStorage` and revalidated in the background. Signing out deletes the database.
+- **Client (IndexedDB, one database per account, `bubbles-<uid>`):** `messages` (the log, keyed `[chat, seq]`, patches included), `outbox` (unacked frames, by `cid`), `inbox`, `chats`. The confirmed log (`['messages', chat]`) and the outbox (`['outbox']`) are separate queries; a chat is shown as the log with the outbox applied on top (`withPending` in `log.ts`), so a live entry never wipes out a pending change. TanStack Query is the store the UI reads; every change is written through, and the cache is filled from here on start so the app renders before the network answers. The session is remembered in `localStorage` and revalidated in the background. Signing out deletes the database.
 
 - **D1:** Better Auth's `user` (plus `username` and `displayUsername`), `session`, `account`, `verification`.
-- **UserDO SQLite:** `chat(chat_id, peer_id, last_seq, preview JSON, updated_at)` (the inbox; read state and unread counts come with read receipts), `push_sub(endpoint, keys)`.
-- **ChatDO SQLite:** `member(user_id, role, read_seq)`, `event(seq PK, cid UNIQUE, sender, ts, kind, body, reply JSON, target, edited, deleted, reactions JSON, rev)` (the log: messages hold their current state; one reaction per person), `message_fts` (FTS5). A schema change drops and recreates tables (`DROP TABLE IF EXISTS` of the old name) rather than migrating, until there is data worth keeping.
+- **UserDO SQLite:** `chat(chat_id, peer_id, last_seq, preview JSON with its rev, updated_at)` (the inbox; read state and unread counts come with read receipts), `push_sub(endpoint, keys)`.
+- **ChatDO SQLite:** `member(user_id, role, read_seq)`, `delivery(user_id, seq)` (fan-out progress), `event(seq PK, cid UNIQUE, sender, ts, kind, body, reply JSON, target, edited, deleted, reactions JSON, rev)` (the log: messages hold their current state; one reaction per person), `message_fts` (FTS5). A schema change drops and recreates tables (`DROP TABLE IF EXISTS` of the old name) rather than migrating, until there is data worth keeping.
 
 ## Build phases
 

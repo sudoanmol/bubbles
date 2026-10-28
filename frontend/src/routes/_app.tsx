@@ -3,7 +3,7 @@ import { createFileRoute, Outlet, redirect, useMatch, useRouter } from '@tanstac
 import { useEffect } from 'react'
 
 import { Sidebar } from '@/components/sidebar'
-import { hydrateInbox } from '@/lib/api'
+import { hydrateInbox, outboxQuery } from '@/lib/api'
 import { sessionQuery } from '@/lib/session'
 import { connect } from '@/lib/socket'
 import { openStore } from '@/lib/store'
@@ -12,11 +12,12 @@ import { openStore } from '@/lib/store'
 export const Route = createFileRoute('/_app')({
   beforeLoad: async ({ context: { queryClient } }) => {
     // The remembered session renders the app at once; the server's answer arrives in the background.
-    const session = await queryClient.ensureQueryData({ ...sessionQuery, revalidateIfStale: true })
+    const session = await queryClient.query({ ...sessionQuery, staleTime: 'static' })
+    void queryClient.query(sessionQuery).catch(() => {})
     if (!session) throw redirect({ to: '/login', search: { mode: 'signin' } })
     if (!session.user.username) throw redirect({ to: '/login/username' })
     openStore(session.user.id)
-    await hydrateInbox(queryClient)
+    await Promise.all([hydrateInbox(queryClient), queryClient.query({ ...outboxQuery, staleTime: 'static' })])
     return { user: session.user }
   },
   component: AppLayout,
@@ -30,10 +31,13 @@ function AppLayout() {
 
   useEffect(() => connect(queryClient), [queryClient])
 
-  // Signed out elsewhere, or the session expired: run the guard again, which sends us to /login.
   useEffect(() => {
+    // Signed out elsewhere, or the session expired: run the guard again, which sends us to /login.
     if (session.data === null) void router.invalidate()
-  }, [session.data, router])
+    // Signed in as someone else in another tab: start over as them, so nothing of this account's socket, cache or
+    // work in flight carries over.
+    else if (session.data && session.data.user.id !== user.id) location.reload()
+  }, [session.data, user.id, router])
 
   return (
     <div className="flex h-dvh">

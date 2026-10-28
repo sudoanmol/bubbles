@@ -2,7 +2,7 @@ import { cn } from 'cn'
 import { PencilIcon, ReplyIcon, SmilePlusIcon, Trash2Icon } from 'lucide-react'
 import { useState } from 'react'
 
-import type { LocalMessage } from '@/lib/api'
+import type { LocalMessage } from '@/lib/log'
 
 const QUICK = ['👍', '❤️', '😂', '😮', '😢', '🔥']
 

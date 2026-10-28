@@ -19,24 +19,27 @@ const Reply = v.object({ seq: v.number(), sender: v.string(), body: v.string() }
  * reaction to the message at `target`, and carries that message's state after the change. Changes being log entries
  * means gap repair covers them too.
  */
-export const Message = v.object({
+const Entry = {
   chat: v.string(),
   seq: v.number(),
   cid: v.string(),
   sender: v.string(),
   ts: v.number(),
-  kind: v.picklist(['text', 'patch']),
   body: v.string(),
   reply: v.nullable(Reply),
-  target: v.nullable(v.number()),
   /** When it was last edited. */
   edited: v.nullable(v.number()),
   deleted: v.boolean(),
   /** One reaction per person: user id → emoji. */
   reactions: v.record(v.string(), v.string()),
   rev: v.number(),
-})
+}
+export const Message = v.variant('kind', [
+  v.object({ ...Entry, kind: v.literal('text'), target: v.null() }),
+  v.object({ ...Entry, kind: v.literal('patch'), target: v.number() }),
+])
 export type Message = v.InferOutput<typeof Message>
+export type Text = Extract<Message, { kind: 'text' }>
 
 /** The parts of a message that patches change. */
 export type MessageState = Pick<Message, 'body' | 'reply' | 'edited' | 'deleted' | 'reactions'>
@@ -77,18 +80,36 @@ export const ServerFrame = v.variant('t', [
   /** The entry the server stored for one of this socket's frames (also sent again for a retry). */
   v.object({ t: v.literal('ack'), msg: Message }),
   v.object({ t: v.literal('msg'), msg: Message }),
+  /**
+   * The server refused the frame for good (not a member, the message is gone, not yours). A passing failure is never
+   * an error frame: the server closes the socket instead, and the client replays its outbox on reconnect.
+   */
   v.object({ t: v.literal('error'), cid: v.optional(v.string()), message: v.string() }),
 ])
 export type ServerFrame = v.InferOutput<typeof ServerFrame>
 
 export type Profile = { id: string; name: string; username: string; image: string | null }
 
+/** The newest message in a chat, at its state as of `rev`. */
+export type Preview = { seq: number; sender: string; body: string; deleted: boolean; rev: number }
+
+/**
+ * The preview after a log entry: a newer message replaces it, and a newer copy of it or a patch to it updates it.
+ * Comparing revisions makes it safe to apply an entry twice. UserDO and the client both keep their inbox with it.
+ */
+export function nextPreview(cur: Preview | null, m: Message): Preview | null {
+  if (m.kind === 'text')
+    return cur && (m.seq < cur.seq || (m.seq === cur.seq && m.rev <= cur.rev))
+      ? cur
+      : { seq: m.seq, sender: m.sender, body: m.body, deleted: m.deleted, rev: m.rev }
+  return cur?.seq === m.target && m.seq > cur.rev ? { ...cur, body: m.body, deleted: m.deleted, rev: m.seq } : cur
+}
+
 export type InboxItem = {
   chatId: string
   peer: Profile
   lastSeq: number
-  /** The newest message, kept current when it is edited or deleted. */
-  preview: { seq: number; sender: string; body: string; deleted: boolean } | null
+  preview: Preview | null
   updatedAt: number
 }
 

@@ -20,8 +20,8 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
   const signOut = useMutation({
     mutationFn: requestSignOut,
     onSuccess: async () => {
-      // Nothing of this account stays on the device.
-      await deleteStore()
+      // Nothing of this account stays on the device. Not awaited: another tab can hold the deletion up for a moment.
+      void deleteStore()
       queryClient.clear()
       queryClient.setQueryData(sessionQuery.queryKey, null)
       await navigate({ to: '/login', search: { mode: 'signin' } })

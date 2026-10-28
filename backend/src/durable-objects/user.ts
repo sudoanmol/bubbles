@@ -1,13 +1,13 @@
 import { DurableObject } from 'cloudflare:workers'
 import * as v from 'valibot'
 
-import { ClientFrame, type InboxItem, type Message, type ServerFrame } from '../protocol'
+import { ClientFrame, nextPreview, type Message, type Preview, type ServerFrame } from '../protocol'
 
 export type InboxRow = {
   chat_id: string
   peer_id: string
   last_seq: number
-  /** JSON of InboxItem['preview']. */
+  /** JSON of a Preview. */
   preview: string | null
   updated_at: number
 }
@@ -48,43 +48,45 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   }
 
   async handle(ws: WebSocket, data: string | ArrayBuffer) {
+    // Closed after a failure below: its later frames must not overtake the failed one, and come again on reconnect.
+    if (ws.readyState !== WebSocket.OPEN) return
     let frame: ClientFrame
     try {
       frame = v.parse(ClientFrame, JSON.parse(data as string))
     } catch {
       return send(ws, { t: 'error', message: 'Invalid frame' })
     }
+    let result: Message | { refused: string }
     try {
-      const msg = await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
-      send(ws, { t: 'ack', msg })
+      result = await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
     } catch (error) {
-      send(ws, { t: 'error', cid: frame.cid, message: error instanceof Error ? error.message : 'Send failed' })
+      // The chat was unreachable, or whether the write landed is unknown. Not a refusal: the client reconnects and
+      // replays its outbox in order with the same cids, and the chat dedupes anything that did land.
+      console.error(error)
+      return ws.close(1011, 'Try again')
     }
+    send(ws, 'refused' in result ? { t: 'error', cid: frame.cid, message: result.refused } : { t: 'ack', msg: result })
   }
 
-  /** Called by ChatDO for each new log entry; idempotent per (chat, seq). */
-  deliver(msg: Message, peer: string) {
-    const row = this.sql.exec<InboxRow>('SELECT * FROM chat WHERE chat_id = ?', msg.chat).toArray()[0]
-    const current: InboxItem['preview'] = row?.preview ? JSON.parse(row.preview) : null
-    // A new message becomes the preview; a change to the message that is the preview updates it.
-    const preview: InboxItem['preview'] =
-      msg.kind === 'text'
-        ? { seq: msg.seq, sender: msg.sender, body: msg.body, deleted: false }
-        : current?.seq === msg.target
-          ? { ...current, body: msg.body, deleted: msg.deleted }
-          : current
-    if (!row || msg.seq > row.last_seq)
+  /** Called by ChatDO with a chat's next log entries, in order. Safe to call again with entries already stored. */
+  deliver(entries: Message[], peer: string) {
+    for (const msg of entries) {
+      const row = this.sql.exec<InboxRow>('SELECT * FROM chat WHERE chat_id = ?', msg.chat).toArray()[0]
+      const current: Preview | null = row?.preview ? JSON.parse(row.preview) : null
+      const preview = nextPreview(current, msg)
       this.sql.exec(
         `INSERT INTO chat (chat_id, peer_id, last_seq, preview, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (chat_id) DO UPDATE SET last_seq = ?3, preview = ?4, updated_at = ?5`,
+         ON CONFLICT (chat_id) DO UPDATE SET last_seq = max(last_seq, ?3), preview = ?4, updated_at = ?5`,
         msg.chat,
         peer,
         msg.seq,
         preview && JSON.stringify(preview),
-        msg.kind === 'text' ? msg.ts : (row?.updated_at ?? msg.ts)
+        // The chat moves up only for a new message, not for a change to an old one.
+        preview && preview.seq !== current?.seq ? msg.ts : (row?.updated_at ?? msg.ts)
       )
-    const frame = JSON.stringify({ t: 'msg', msg } satisfies ServerFrame)
-    for (const ws of this.ctx.getWebSockets()) ws.send(frame)
+    }
+    const frames = entries.map((msg) => JSON.stringify({ t: 'msg', msg } satisfies ServerFrame))
+    for (const ws of this.ctx.getWebSockets()) for (const frame of frames) ws.send(frame)
   }
 
   /** Adds a chat the user opened before anyone has written in it. */

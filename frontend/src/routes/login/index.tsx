@@ -12,7 +12,7 @@ type Mode = 'signin' | 'signup'
 export const Route = createFileRoute('/login/')({
   validateSearch: (search): { mode: Mode } => ({ mode: search.mode === 'signup' ? 'signup' : 'signin' }),
   beforeLoad: async ({ context }) => {
-    const session = await context.queryClient.ensureQueryData(sessionQuery)
+    const session = await context.queryClient.query({ ...sessionQuery, staleTime: 'static' })
     if (session) throw redirect({ to: session.user.username ? '/' : '/login/username' })
   },
   component: Login,

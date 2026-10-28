@@ -1,5 +1,5 @@
 import { Combobox } from '@base-ui/react/combobox'
-import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import type { Profile } from 'backend/protocol'
 import { cn } from 'cn'
@@ -10,7 +10,7 @@ import { FormError } from '@/components/auth-layout'
 import { Avatar } from '@/components/avatar'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useDebounced } from '@/hooks/use-debounced'
-import { openDm, searchUsersQuery } from '@/lib/api'
+import { inboxQuery, openDm, searchUsersQuery } from '@/lib/api'
 
 /** Finds people by name or username as you type and opens the DM. Loaded on demand by `NewChat`. */
 export default function NewChatDialog({
@@ -22,6 +22,7 @@ export default function NewChatDialog({
 }) {
   const [search, setSearch] = useState('')
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const q = useDebounced(search.trim().toLowerCase(), 150)
   const results = useQuery({ ...searchUsersQuery(q), enabled: q !== '', placeholderData: keepPreviousData })
@@ -30,6 +31,8 @@ export default function NewChatDialog({
   const start = useMutation({
     mutationFn: (username: string) => openDm(username),
     onSuccess: async ({ chatId }) => {
+      // A new DM is in the inbox before anyone writes in it.
+      void queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey })
       onOpenChange(false)
       await navigate({ to: '/c/$chatId', params: { chatId } })
     },

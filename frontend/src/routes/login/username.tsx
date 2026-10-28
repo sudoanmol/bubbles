@@ -11,7 +11,7 @@ import { sessionQuery } from '@/lib/session'
 
 export const Route = createFileRoute('/login/username')({
   beforeLoad: async ({ context }) => {
-    const session = await context.queryClient.ensureQueryData(sessionQuery)
+    const session = await context.queryClient.query({ ...sessionQuery, staleTime: 'static' })
     if (!session) throw redirect({ to: '/login', search: { mode: 'signin' } })
     if (session.user.username) throw redirect({ to: '/' })
     return { user: session.user }

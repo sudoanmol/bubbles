@@ -1,7 +1,7 @@
 import type { Chat, InboxItem, Message } from 'backend/protocol'
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb'
 
-import type { Pending } from './api'
+import type { Pending } from './log'
 
 // The device's copy of the user's data in IndexedDB. TanStack Query stays the store the UI reads; everything that
 // changes it is written through to here, and the app reads it back on start so it renders before the network answers.
@@ -31,11 +31,24 @@ export function openStore(uid: string) {
         db.createObjectStore('inbox', { keyPath: 'chatId' })
         db.createObjectStore('chats', { keyPath: 'id' })
       },
+      // Another tab is deleting this database (sign out) or upgrading it: let go, so it isn't left waiting.
+      blocking(_current, _blocked, event) {
+        ;(event.target as IDBDatabase).close()
+        if (current?.uid === uid) current = undefined
+      },
     }),
   }
 }
 
-export const currentUid = () => current!.uid
+export const currentUid = () => current?.uid
+
+/**
+ * Throws if the open account is no longer `uid`. Work that awaits the network checks this before storing what it
+ * got, so a response for one account never lands in the next one's database.
+ */
+export function checkAccount(uid: string | undefined) {
+  if (current?.uid !== uid) throw new Error('Signed in as someone else')
+}
 
 /** Removes everything this device holds for the user (on sign out). */
 export async function deleteStore() {
@@ -70,42 +83,29 @@ async function acked(db: IDBPDatabase<Schema>, chat: string, limit: number, befo
   return out.reverse()
 }
 
-/** The newest log entries held for a chat, and its unsent frames. */
-export const cachedMessages = (chat: string, limit: number) =>
-  use<[Message[], Pending[]]>([[], []], async (db) => [
-    await acked(db, chat, limit),
-    (await db.getAll('outbox')).filter((p) => p.chat === chat).sort((a, b) => (a.cid < b.cid ? -1 : 1)),
-  ])
-
-export const cachedMessage = (chat: string, seq: number) => use(undefined, (db) => db.get('messages', [chat, seq]))
+/** The newest log entries held for a chat. */
+export const cachedMessages = (chat: string, limit: number) => use<Message[]>([], (db) => acked(db, chat, limit))
 
 /** A page of history before `before` from the local copy, so scrolling back works offline. */
 export const cachedOlder = (chat: string, before: number, limit: number) =>
   use<Message[]>([], (db) => acked(db, chat, limit, before))
 
 /**
- * Stores log entries the server sent and clears them from the outbox. A patch also updates the message it changed,
- * if that is held. `dropBefore` deletes the chat's older copy when gap repair had to jump to the latest page, so
- * what's stored stays one unbroken run.
+ * Stores log entries the server sent and clears them from the outbox. A copy never replaces a newer one (higher
+ * `rev`); patches are folded into their messages on read (`merge`). `dropBefore` deletes the chat's older copy when
+ * gap repair had to jump to the latest page, so what's stored stays one unbroken run.
  */
 export const saveMessages = (chat: string, messages: Message[], dropBefore?: number) =>
   use(undefined, async (db) => {
     const tx = db.transaction(['messages', 'outbox'], 'readwrite')
     const store = tx.objectStore('messages')
-    const patch = async (p: Message) => {
-      const target = await store.get([chat, p.target!])
-      if (target && p.seq > target.rev) {
-        const { body, reply, edited, deleted, reactions } = p
-        await store.put({ ...target, body, reply, edited, deleted, reactions, rev: p.seq })
-      }
+    const put = async (m: Message) => {
+      const held = await store.get([chat, m.seq])
+      if (!held || held.rev <= m.rev) await store.put(m)
     }
     await Promise.all([
       dropBefore !== undefined && store.delete(chatRange(chat, dropBefore)),
-      ...messages.flatMap((m) => [
-        store.put(m),
-        tx.objectStore('outbox').delete(m.cid),
-        m.kind === 'patch' && patch(m),
-      ]),
+      ...messages.flatMap((m) => [put(m), tx.objectStore('outbox').delete(m.cid)]),
       tx.done,
     ])
   })
@@ -116,14 +116,6 @@ export const allOutbox = () =>
 export const deleteOutbox = (cid: string) => use(undefined, (db) => db.delete('outbox', cid))
 
 export const saveOutbox = (pending: Pending) => use(undefined, (db) => db.put('outbox', pending).then(() => {}))
-
-/** Marks an unsent frame as refused by the server, and returns it. */
-export const failOutbox = (cid: string) =>
-  use(undefined, async (db) => {
-    const pending = await db.get('outbox', cid)
-    if (pending) await db.put('outbox', { ...pending, failed: true })
-    return pending
-  })
 
 export const cachedInbox = () =>
   use<InboxItem[]>([], async (db) => (await db.getAll('inbox')).sort((a, b) => b.updatedAt - a.updatedAt))

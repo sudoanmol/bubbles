@@ -28,14 +28,12 @@ type Message = {
   seq: number
   cid: string
   sender: string
-  kind: 'text' | 'patch'
   body: string
-  target: number | null
   edited: number | null
   deleted: boolean
   reactions: Record<string, string>
   rev: number
-}
+} & ({ kind: 'text'; target: null } | { kind: 'patch'; target: number })
 type Frame = { t: 'ack'; msg: Message } | { t: 'msg'; msg: Message } | { t: 'error'; cid?: string; message: string }
 type Out = { t: string; chat: string; cid: string; [k: string]: unknown }
 
@@ -182,17 +180,24 @@ class Device {
     }
   }
 
-  /** Keeps the entry, and folds a patch into the message it changed (if this copy is older than the patch). */
+  /**
+   * Keeps the entry. Every patch carries its message's state after the change, so a message ends at the state of the
+   * newest entry about it, whichever arrived first (as `merge` in the app).
+   */
   store(m: Message) {
     const log = this.log.get(m.chat)!
     const prev = log.get(m.seq)
     if (prev && prev.cid !== m.cid) this.conflicts.push(`${m.chat} seq ${m.seq}: ${prev.cid} then ${m.cid}`)
     if (prev && prev.rev > m.rev) return
     log.set(m.seq, m)
-    const target = m.kind === 'patch' ? log.get(m.target!) : undefined
-    if (target && m.seq > target.rev) {
-      const { body, edited, deleted, reactions } = m
-      log.set(target.seq, { ...target, body, edited, deleted, reactions, rev: m.seq })
+    const target = log.get(m.kind === 'patch' ? m.target : m.seq)
+    if (target?.kind !== 'text') return
+    let newest: Message | undefined
+    for (const p of log.values())
+      if (p.kind === 'patch' && p.target === target.seq && p.seq > (newest?.seq ?? target.rev)) newest = p
+    if (newest) {
+      const { body, edited, deleted, reactions } = newest
+      log.set(target.seq, { ...target, body, edited, deleted, reactions, rev: newest.seq })
     }
   }
 
@@ -221,14 +226,20 @@ class Device {
 }
 
 // wrangler dev rebuilds when a source file's content changes and restarts every Durable Object, dropping every
-// socket: a local deploy. Reverting the edit a few seconds later restarts it once more.
+// socket: a local deploy. Reverting the edit a few seconds later restarts it once more. The revert only undoes this
+// run's own edit: if the file holds anything else by then (someone saved over it), it is left alone.
 const entry = new URL('../backend/src/index.ts', import.meta.url)
 const original = readFileSync(entry, 'utf8')
-const revert = () => writeFileSync(entry, original)
+let edited: string | undefined
+const revert = () => {
+  if (edited !== undefined && readFileSync(entry, 'utf8') === edited) writeFileSync(entry, original)
+  edited = undefined
+}
 process.on('exit', revert)
 
-// The test's accounts (all on @chaos.test) leave the local database when it ends, pass or fail. Their sessions and
-// accounts go with them (ON DELETE CASCADE). ponytail: their chats' Durable Object storage stays in .wrangler/state.
+// This run's accounts leave the local database when it ends, pass or fail; other runs' are left alone. Their sessions
+// and accounts go with them (ON DELETE CASCADE). ponytail: their chats' Durable Object storage stays in .wrangler/state.
+const run = Date.now().toString(36)
 const local = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)
 process.on('exit', () => {
   if (!local) return
@@ -243,25 +254,27 @@ process.on('exit', () => {
         'DB',
         '--local',
         '--command',
-        "DELETE FROM user WHERE email GLOB '*@chaos.test'",
+        `DELETE FROM user WHERE email GLOB 'chaos_${run}_*@chaos.test'`,
       ],
       { cwd: new URL('../backend', import.meta.url), stdio: 'ignore' }
     )
     console.log('removed the chaos users from the local database')
   } catch {
-    console.error("could not remove the chaos users; run: DELETE FROM user WHERE email GLOB '*@chaos.test'")
+    console.error(
+      `could not remove the chaos users; run: DELETE FROM user WHERE email GLOB 'chaos_${run}_*@chaos.test'`
+    )
   }
 })
 process.on('SIGINT', () => process.exit(130))
 
 function redeploy() {
   console.log('redeploying the backend mid-stream (twice: edit, then revert)…')
-  writeFileSync(entry, original + `\n// chaos redeploy ${Date.now()}\n`)
+  edited = original + `\n// chaos redeploy ${Date.now()}\n`
+  writeFileSync(entry, edited)
   setTimeout(revert, 3000)
 }
 
 async function main() {
-  const run = Date.now().toString(36)
   console.log(`chaos ${run}: ${USERS} users × ${DEVICES_PER_USER} devices × ${MESSAGES_PER_DEVICE} messages → ${BASE}`)
 
   const users = await Promise.all(Array.from({ length: USERS }, (_, i) => signUp(`chaos_${run}_${i}`)))

@@ -5,7 +5,8 @@ import { ArrowUpIcon, PencilIcon, PlusIcon, ReplyIcon, SmileIcon, XIcon } from '
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 
 import { ConnectionPill } from '@/components/connection-pill'
-import { messagesQuery, type LocalMessage } from '@/lib/api'
+import { messagesQuery, outboxQuery } from '@/lib/api'
+import { withPending, type LocalMessage } from '@/lib/log'
 import { patchMessage, sendMessage } from '@/lib/socket'
 
 // The picker (Base UI Popover + frimousse) loads on first hover or focus of its button, not with the chat.
@@ -137,6 +138,7 @@ export function Composer({
         <button
           type="button"
           aria-label="Add image"
+          disabled
           className="relative -top-1 flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-paper shadow-[2px_2px_0_var(--color-ink)] transition-[translate,box-shadow,background-color] duration-100 hover:bg-sun active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
         >
           <PlusIcon className="size-5" strokeWidth={2.75} />
@@ -158,9 +160,12 @@ export function Composer({
               if (e.key === 'Escape' && mode) onMode(null)
               // Up in an empty field edits your last message, as in Slack and Discord.
               if (e.key === 'ArrowUp' && !body && !mode) {
-                const last = queryClient
-                  .getQueryData<LocalMessage[]>(messagesQuery(chatId).queryKey)
-                  ?.findLast((m) => m.kind === 'text' && m.sender === uid && m.seq !== null && !m.deleted)
+                const last = withPending(
+                  chatId,
+                  queryClient.getQueryData(messagesQuery(chatId).queryKey) ?? [],
+                  queryClient.getQueryData(outboxQuery.queryKey) ?? [],
+                  uid
+                ).findLast((m) => m.sender === uid && m.seq !== null && !m.deleted)
                 if (last) {
                   e.preventDefault()
                   onMode({ t: 'edit', message: last })
