@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "printWidth": 120,
+  "trailingComma": "es5",
+  "sortImports": true,
+  "sortTailwindcss": { "stylesheet": "./frontend/src/styles.css", "functions": ["cn"] },
+  "ignorePatterns": ["dist", "routeTree.gen.ts", "worker-configuration.d.ts", "drizzle/meta"]
+}

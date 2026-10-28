@@ -14,14 +14,14 @@ frontend/   TanStack Start on Workers: React 19, Tailwind v4, TanStack Query
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
-| Task | Command (from the root) |
-| --- | --- |
-| Install | `pnpm install` |
-| Dev (both workers) | `pnpm dev` (frontend on :3000, backend on :8787) |
-| Typecheck | `pnpm typecheck` |
-| Build | `pnpm build` |
-| Lint / format | `pnpm lint`, `pnpm format` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged) |
-| Worker binding types | `pnpm -C backend cf-typegen` after editing `wrangler.jsonc` |
+| Task                 | Command (from the root)                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------- |
+| Install              | `pnpm install`                                                                              |
+| Dev (both workers)   | `pnpm dev` (frontend on :3000, backend on :8787)                                            |
+| Typecheck            | `pnpm typecheck`                                                                            |
+| Build                | `pnpm build`                                                                                |
+| Lint / format        | `pnpm lint`, `pnpm format` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged) |
+| Worker binding types | `pnpm -C backend cf-typegen` after editing `wrangler.jsonc`                                 |
 
 Assume the dev server is already running. Verify work with `pnpm typecheck` and `pnpm build`.
 
@@ -60,18 +60,18 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 
 ### Stack
 
-| Layer | Choice |
-| --- | --- |
-| Frontend | TanStack Start + Router, React 19 + Compiler, Tailwind v4 |
-| Client data | TanStack Query (all server state), Dexie for IndexedDB (phase 2), TanStack Virtual for message lists |
-| Socket client | `partysocket` (reconnect with backoff) |
-| API | Hono, with the `hc` typed RPC client |
-| Protocol | Valibot schemas in a shared module; every WebSocket frame is parsed on both sides |
-| Auth | Better Auth on D1 via the Drizzle adapter: email/password, username plugin, Google OAuth |
-| Storage | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2 |
-| Async | Queues → Web Push (VAPID) |
-| Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine |
-| Tooling | oxlint, oxfmt, husky + lint-staged |
+| Layer                  | Choice                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| Frontend               | TanStack Start + Router, React 19 + Compiler, Tailwind v4                                            |
+| Client data            | TanStack Query (all server state), Dexie for IndexedDB (phase 2), TanStack Virtual for message lists |
+| Socket client          | `partysocket` (reconnect with backoff)                                                               |
+| API                    | Hono, with the `hc` typed RPC client                                                                 |
+| Protocol               | Valibot schemas in a shared module; every WebSocket frame is parsed on both sides                    |
+| Auth                   | Better Auth on D1 via the Drizzle adapter: email/password, username plugin, Google OAuth             |
+| Storage                | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2                            |
+| Async                  | Queues → Web Push (VAPID)                                                                            |
+| Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine                                                |
+| Tooling                | oxlint, oxfmt, husky + lint-staged                                                                   |
 
 ## Auth
 
@@ -84,11 +84,11 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 
 ### Routes
 
-| Path | Who can see it | Purpose |
-| --- | --- | --- |
-| `/login` | Signed-out users | Sign in (email or username + password), sign up, Google |
-| `/login/username` | Signed-in users without a username | Choose a username |
-| `/` | Signed-in users with a username | Home: inbox and chats |
+| Path              | Who can see it                     | Purpose                                                 |
+| ----------------- | ---------------------------------- | ------------------------------------------------------- |
+| `/login`          | Signed-out users                   | Sign in (email or username + password), sign up, Google |
+| `/login/username` | Signed-in users without a username | Choose a username                                       |
+| `/`               | Signed-in users with a username    | Home: inbox and chats                                   |
 
 ## Delivery protocol (the core of the project)
 
@@ -121,35 +121,35 @@ client                          UserDO                    ChatDO
 
 Each phase lists what to build and when it counts as done.
 
-0. **Foundations.** pnpm workspace, root `.env`, oxlint/oxfmt + husky, Better Auth + D1 + Drizzle, the `/login`, `/login/username` and `/` routes, CI (typecheck + build + deploy). *Done when:* you can sign up with email or Google in production, pick a username and land on `/`.
-1. **DMs end to end.** UserDO with a hibernating socket; ChatDO with `seq` and `cid` deduplication; RPC fan-out; inbox list; chat view with paginated history; sending. *Done when:* two browsers can DM each other live in production.
-2. **Reliability and local-first (the main differentiator).** Dexie cache, outbox, per-chat cursors, gap repair, replay on reconnect; render from cache before the socket connects; optimistic sends with pending/sent/failed states. Chaos test: scripted clients plus forced disconnects plus a redeploy partway through, then assert that every client's log is identical. *Done when:* the chaos test passes in CI, and turning on airplane mode, sending 5 messages and reconnecting delivers all 5 in order.
-3. **Groups and core features.** Create, rename, add or remove members, roles (removing a member cuts off delivery immediately); replies, edits, deletes, reactions; read receipts via `read_seq`, unread counts, typing, presence; rate limits on send, connect and auth. *Done when:* v2 has every feature v1 had.
-4. **Media and links.** Direct-to-R2 uploads with presigned PUTs, thumbnails from Image Transformations, a link-preview unfurler with a cache. *Done when:* images and link cards render instantly from cache when you scroll back.
-5. **Search and notifications.** FTS5 search per chat with jump-to-message; installable PWA; Web Push through Queues when a user has no live socket; per-chat mute. *Done when:* a phone with the app closed gets a push notification, and search returns in under 50 ms.
-6. **Prove it.** Latency sampling into Analytics Engine; a public `/status` page with p50/p95/p99; a load-test harness with results committed; a cost model in the README. Optional: a Workers AI "catch me up" summary of unread messages. *Done when:* the README opens with real numbers and a chart.
+0. **Foundations.** pnpm workspace, root `.env`, oxlint/oxfmt + husky, Better Auth + D1 + Drizzle, the `/login`, `/login/username` and `/` routes, CI (typecheck + build + deploy). _Done when:_ you can sign up with email or Google in production, pick a username and land on `/`.
+1. **DMs end to end.** UserDO with a hibernating socket; ChatDO with `seq` and `cid` deduplication; RPC fan-out; inbox list; chat view with paginated history; sending. _Done when:_ two browsers can DM each other live in production.
+2. **Reliability and local-first (the main differentiator).** Dexie cache, outbox, per-chat cursors, gap repair, replay on reconnect; render from cache before the socket connects; optimistic sends with pending/sent/failed states. Chaos test: scripted clients plus forced disconnects plus a redeploy partway through, then assert that every client's log is identical. _Done when:_ the chaos test passes in CI, and turning on airplane mode, sending 5 messages and reconnecting delivers all 5 in order.
+3. **Groups and core features.** Create, rename, add or remove members, roles (removing a member cuts off delivery immediately); replies, edits, deletes, reactions; read receipts via `read_seq`, unread counts, typing, presence; rate limits on send, connect and auth. _Done when:_ v2 has every feature v1 had.
+4. **Media and links.** Direct-to-R2 uploads with presigned PUTs, thumbnails from Image Transformations, a link-preview unfurler with a cache. _Done when:_ images and link cards render instantly from cache when you scroll back.
+5. **Search and notifications.** FTS5 search per chat with jump-to-message; installable PWA; Web Push through Queues when a user has no live socket; per-chat mute. _Done when:_ a phone with the app closed gets a push notification, and search returns in under 50 ms.
+6. **Prove it.** Latency sampling into Analytics Engine; a public `/status` page with p50/p95/p99; a load-test harness with results committed; a cost model in the README. Optional: a Workers AI "catch me up" summary of unread messages. _Done when:_ the README opens with real numbers and a chart.
 
 ## Performance budget
 
-| Metric | Target | How it's measured |
-| --- | --- | --- |
-| JS on the first load of the app | < 120 KB gzip | Build output check in CI |
-| Time to first chat visible (warm cache) | < 150 ms | `performance.mark` → Analytics Engine |
-| Send → ack, p50 (same region) | < 50 ms | Client timing per message |
-| Send → peer receive, p99 (same continent) | < 150 ms | Server timestamp vs. client receive time |
-| Messages lost or duplicated under chaos | 0 | Chaos test suite |
-| Inbox load | 1 DO read, < 30 ms | Worker timing |
+| Metric                                    | Target             | How it's measured                        |
+| ----------------------------------------- | ------------------ | ---------------------------------------- |
+| JS on the first load of the app           | < 120 KB gzip      | Build output check in CI                 |
+| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine    |
+| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                |
+| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time |
+| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                         |
+| Inbox load                                | 1 DO read, < 30 ms | Worker timing                            |
 
 ## Differentiators (each needs proof, not just a claim)
 
-| Differentiator | Proof |
-| --- | --- |
-| Exactly-once, gap-free delivery | Chaos test that kills sockets and redeploys mid-stream, then asserts identical client logs |
-| Instant cold open from the local cache | Recorded numbers comparing v1 and v2 |
-| Public live latency page | `/status` with p50/p95/p99 |
-| Actor-per-chat with zero servers to run | README cost model: $ per 1M messages and idle cost |
-| Per-chat FTS5 search | Search latency on a chat with 100k messages |
-| Load tested | Chart of latency against concurrency, and the breaking point |
+| Differentiator                          | Proof                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Exactly-once, gap-free delivery         | Chaos test that kills sockets and redeploys mid-stream, then asserts identical client logs |
+| Instant cold open from the local cache  | Recorded numbers comparing v1 and v2                                                       |
+| Public live latency page                | `/status` with p50/p95/p99                                                                 |
+| Actor-per-chat with zero servers to run | README cost model: $ per 1M messages and idle cost                                         |
+| Per-chat FTS5 search                    | Search latency on a chat with 100k messages                                                |
+| Load tested                             | Chart of latency against concurrency, and the breaking point                               |
 
 Out of scope on purpose: end-to-end encryption (it would rule out server-side search and summaries) and an "AI chatbot in the chat."
 
