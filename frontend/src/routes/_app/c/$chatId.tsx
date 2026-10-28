@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { cn } from 'cn'
+import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon } from 'lucide-react'
 import { Fragment, useEffect } from 'react'
 
@@ -19,7 +20,7 @@ import {
   useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller'
 import { api, chatQuery, messagesQuery, type LocalMessage, type Messages } from '@/lib/api'
-import { formatDay, formatTime, sameDay } from '@/lib/time'
+import { formatDay, formatTime } from '@/lib/time'
 
 export const Route = createFileRoute('/_app/c/$chatId')({
   loader: ({ context: { queryClient }, params: { chatId } }) =>
@@ -74,7 +75,7 @@ function MessageList({ chatId, uid }: { chatId: string; uid: string }) {
             const prev = all[r - 1]?.at(-1)
             return (
               <Fragment key={first.cid}>
-                {(!prev || !sameDay(prev.ts, first.ts)) && (
+                {(!prev || !isSameDay(prev.ts, first.ts)) && (
                   <MessageScrollerItem className="mt-4 mb-2.5 self-center first:mt-0">
                     <span className="text-xs font-semibold tracking-[0.08em] text-muted-foreground uppercase">
                       {formatDay(first.ts)}
@@ -82,7 +83,7 @@ function MessageList({ chatId, uid }: { chatId: string; uid: string }) {
                   </MessageScrollerItem>
                 )}
                 <MessageGroup
-                  className={cn(prev && prev.sender !== first.sender && sameDay(prev.ts, first.ts) && 'mt-2')}
+                  className={cn(prev && prev.sender !== first.sender && isSameDay(prev.ts, first.ts) && 'mt-2')}
                 >
                   {run.map((m, i) => (
                     <MessageScrollerItem key={m.cid} messageId={m.cid}>
@@ -115,7 +116,7 @@ function runs(messages: LocalMessage[]) {
   for (const m of messages) {
     const run = out.at(-1)
     const last = run?.at(-1)
-    if (run && last && last.sender === m.sender && sameDay(last.ts, m.ts)) run.push(m)
+    if (run && last && last.sender === m.sender && isSameDay(last.ts, m.ts)) run.push(m)
     else out.push([m])
   }
   return out
