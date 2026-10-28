@@ -1,9 +1,10 @@
 import { Hono } from 'hono'
 
-const app = new Hono()
+import { auth } from './auth'
 
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
+const app = new Hono().basePath('/api')
 
+app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw))
+
+export type AppType = typeof app
 export default app

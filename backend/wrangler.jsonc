@@ -5,4 +5,6 @@
   "compatibility_date": "2026-10-27",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  "dev": { "port": 8790 },
+  "d1_databases": [{ "binding": "DB", "database_name": "bubbles", "migrations_dir": "drizzle" }],
 }

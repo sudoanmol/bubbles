@@ -17,7 +17,7 @@ frontend/   TanStack Start on Workers: React 19, Tailwind v4, TanStack Query
 | Task                 | Command (from the root)                                                                     |
 | -------------------- | ------------------------------------------------------------------------------------------- |
 | Install              | `pnpm install`                                                                              |
-| Dev (both workers)   | `pnpm dev` (frontend on :3000, backend on :8787)                                            |
+| Dev (both workers)   | `pnpm dev` (frontend on :3100, backend on :8790)                                            |
 | Typecheck            | `pnpm typecheck`                                                                            |
 | Build                | `pnpm build`                                                                                |
 | Lint / format        | `pnpm lint`, `pnpm format` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged) |
@@ -55,7 +55,7 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 - **ChatDO is the single source of truth for a chat.** A Durable Object handles one request at a time, so every chat gets a strict total order for free: a monotonic `seq` per chat, with no locks and no Redis.
 - **WebSocket Hibernation API** (`ctx.acceptWebSocket`). Idle sockets cost nothing.
 - **D1 holds only global data:** users, sessions, accounts, handles, user search. Chat data never goes into D1. It lives in each ChatDO's own durable SQLite database, which has 30-day point-in-time recovery. Cross-chat queries (global search, deleting a user's data) fan out over the user's inbox. Analytics comes from copying events to Analytics Engine or Queues, never from querying live chat databases.
-- **Same origin.** In production, both Workers are routed on one domain. In dev, Vite proxies `/api` to `:8787`. Cookie auth therefore needs no CORS.
+- **Same origin.** In production, both Workers are routed on one domain. In dev, Vite proxies `/api` to `:8790`. Cookie auth therefore needs no CORS.
 - **SSR is off** (`defaultSsr: false` in `frontend/src/start.ts`). The app renders on the client from the local cache. The server renders only the HTML shell.
 
 ### Stack

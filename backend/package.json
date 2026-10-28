@@ -6,12 +6,21 @@
     "dev": "wrangler dev --env-file ../.env",
     "deploy": "wrangler deploy --minify",
     "typecheck": "tsc --noEmit",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "cf-typegen": "wrangler types --env-file ../.env --env-interface CloudflareBindings",
+    "auth:generate": "auth generate --config src/auth.ts --output src/db/schema.ts --yes",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.7.14",
+    "better-auth": "^1.7.14",
+    "drizzle-orm": "^0.45.4",
     "hono": "^4.13.14"
   },
   "devDependencies": {
+    "auth": "^1.7.14",
+    "drizzle-kit": "^0.31.11",
     "typescript": "^6.0.3",
     "wrangler": "^4.153.0"
   }
