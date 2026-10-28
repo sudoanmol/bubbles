@@ -1,12 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { PlusIcon, SearchIcon } from 'lucide-react'
+import { SearchIcon } from 'lucide-react'
 import { useState } from 'react'
 
 import { Avatar } from '@/components/avatar'
 import { Logo } from '@/components/logo'
-import { NewChatDialog } from '@/components/new-chat-dialog'
-import { Button } from '@/components/ui/button'
+import { NewChat } from '@/components/new-chat'
 import { inboxQuery } from '@/lib/api'
 import { authClient, sessionQuery, unwrap, type Session } from '@/lib/auth'
 import { formatShort } from '@/lib/time'
@@ -34,14 +33,10 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
   return (
     <aside className={`w-full shrink-0 flex-col gap-5 border-r border-line px-4 pt-6 md:w-[360px] ${className}`}>
       <div className="flex items-center justify-between px-2">
-        <Logo />
-        <NewChatDialog
-          trigger={
-            <Button variant="sun" size="icon" aria-label="New chat">
-              <PlusIcon className="size-[18px]" strokeWidth={3} />
-            </Button>
-          }
-        />
+        <Link to="/" aria-label="Bubbles home" className="rounded-lg">
+          <Logo />
+        </Link>
+        <NewChat variant="icon" />
       </div>
 
       <label className="flex h-11 shrink-0 items-center gap-2.5 rounded-xl bg-wash px-3.5">

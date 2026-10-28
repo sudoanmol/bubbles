@@ -1,14 +1,13 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { MAX_BODY } from 'backend/protocol'
 import { cn } from 'cn'
-import { ArrowLeftIcon, ArrowUpIcon } from 'lucide-react'
-import { Fragment, useEffect, useState } from 'react'
+import { ArrowLeftIcon } from 'lucide-react'
+import { Fragment, useEffect } from 'react'
 
 import { Avatar } from '@/components/avatar'
+import { Composer } from '@/components/composer'
 import { ErrorState } from '@/components/error-state'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
-import { Button } from '@/components/ui/button'
 import { Message, MessageContent, MessageFooter, MessageGroup } from '@/components/ui/message'
 import {
   MessageScroller,
@@ -20,7 +19,6 @@ import {
   useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller'
 import { api, chatQuery, messagesQuery, type LocalMessage, type Messages } from '@/lib/api'
-import { sendMessage } from '@/lib/socket'
 import { formatDay, formatTime, sameDay } from '@/lib/time'
 
 export const Route = createFileRoute('/_app/c/$chatId')({
@@ -161,48 +159,5 @@ function LoadOlder({ chatId, data }: { chatId: string; data: Messages }) {
     <p className="py-2 text-center text-xs text-muted-foreground">
       {load.isError ? 'Could not load older messages' : 'Loading…'}
     </p>
-  )
-}
-
-function Composer({ chatId, uid, placeholder }: { chatId: string; uid: string; placeholder: string }) {
-  const queryClient = useQueryClient()
-  const [body, setBody] = useState('')
-
-  const send = () => {
-    const text = body.trim()
-    if (!text) return
-    sendMessage(queryClient, chatId, uid, text)
-    setBody('')
-  }
-
-  return (
-    <form
-      className="shrink-0 px-4 pb-4 md:px-7 md:pb-6"
-      onSubmit={(e) => {
-        e.preventDefault()
-        send()
-      }}
-    >
-      <div className="flex items-end gap-2.5 rounded-[18px] border-2 border-ink bg-paper py-2 pr-2 pl-5 shadow-sticker">
-        <textarea
-          aria-label={placeholder}
-          placeholder={placeholder}
-          rows={1}
-          maxLength={MAX_BODY}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              send()
-            }
-          }}
-          className="[field-sizing:content] max-h-40 min-h-11 flex-1 resize-none bg-transparent py-[11px] text-base leading-[22px] outline-none placeholder:text-muted-foreground"
-        />
-        <Button type="submit" variant="sun" size="icon" aria-label="Send" disabled={!body.trim()} className="size-11">
-          <ArrowUpIcon className="size-[18px]" strokeWidth={2.75} />
-        </Button>
-      </div>
-    </form>
   )
 }

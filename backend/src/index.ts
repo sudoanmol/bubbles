@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import { auth } from './auth'
 import type { AppEnv } from './env'
 import { chats } from './routes/chats'
+import { dev } from './routes/dev'
 import { dms } from './routes/dms'
 import { inbox } from './routes/inbox'
 import { users } from './routes/users'
@@ -15,6 +16,7 @@ export { UserDO } from './durable-objects/user'
 const app = new Hono<AppEnv>().basePath('/api')
 
 app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw))
+app.route('/dev', dev)
 
 // Every route below needs a signed-in user who has picked a username.
 app.use(async (c, next) => {

@@ -22,14 +22,15 @@ frontend/   Worker `bubbles` (public): TanStack Start, React 19, Tailwind v4, Ta
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
-| Task                 | Command (from the root)                                                                  |
-| -------------------- | ---------------------------------------------------------------------------------------- |
-| Install              | `pnpm install`                                                                           |
-| Dev (both workers)   | `pnpm dev` (app on :3100, API on :8790; the API restarts when `.env` changes)            |
-| Typecheck            | `pnpm typecheck`                                                                         |
-| Build                | `pnpm build`                                                                             |
-| Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged) |
-| Worker binding types | `pnpm -C <pkg> cf-typegen` after editing that package's `wrangler.jsonc`                 |
+| Task                 | Command (from the root)                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| Install              | `pnpm install`                                                                                            |
+| Sign in as any user  | Open `http://localhost:3100/api/dev/login/<username>` (local only; for testing two accounts side by side) |
+| Dev (both workers)   | `pnpm dev` (app on :3100, API on :8790; the API restarts when `.env` changes)                             |
+| Typecheck            | `pnpm typecheck`                                                                                          |
+| Build                | `pnpm build`                                                                                              |
+| Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged)                  |
+| Worker binding types | `pnpm -C <pkg> cf-typegen` after editing that package's `wrangler.jsonc`                                  |
 
 Assume the dev server is already running. Verify work with `pnpm typecheck` and `pnpm build`.
 
@@ -169,7 +170,7 @@ Out of scope on purpose: end-to-end encryption (it would rule out server-side se
 
 ## UI
 
-Designs live in the Paper file "Bubbles". Build to those designs: the style is clean, fun and playful, and the app should feel good to use. Pull exact values with Paper's `get_jsx` and `get_computed_styles`, never from screenshots. Shared color, type and radius tokens live in `frontend/src/styles.css` as a Tailwind v4 `@theme`; shadcn's semantic tokens (`primary`, `muted-foreground`, …) map onto that palette in the `@theme inline` block. Add shadcn components with `pnpm dlx shadcn@latest add <name>` in `frontend/`, then restyle them to the Paper design. Import app code with the `@/` alias. Fonts are self-hosted through Fontsource.
+Designs live in the Paper file "Bubbles". **Design first:** before building any new UI feature, or changing how an existing one looks, design it in Paper (add a screen or update the existing one) and get it right there; then implement it by hand from that design. Never ship UI that exists only in code. Build to those designs: the style is clean, fun and playful, and the app should feel good to use. Pull exact values with Paper's `get_jsx` and `get_computed_styles`, never from screenshots. Shared color, type and radius tokens live in `frontend/src/styles.css` as a Tailwind v4 `@theme`; shadcn's semantic tokens (`primary`, `muted-foreground`, …) map onto that palette in the `@theme inline` block. Add shadcn components with `pnpm dlx shadcn@latest add <name>` in `frontend/`, then restyle them to the Paper design. Import app code with the `@/` alias. Heavy, rarely used UI (dialogs, pickers) is loaded with `lazy()` on first hover or focus of its trigger, so it stays out of the first-load bundle. Fonts are self-hosted through Fontsource.
 
 ## Deploy
 

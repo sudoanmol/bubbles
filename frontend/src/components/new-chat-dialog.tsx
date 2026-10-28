@@ -4,17 +4,22 @@ import { useNavigate } from '@tanstack/react-router'
 import type { Profile } from 'backend/protocol'
 import { cn } from 'cn'
 import { SearchIcon } from 'lucide-react'
-import { useState, type ReactElement } from 'react'
+import { useState } from 'react'
 
 import { FormError } from '@/components/auth-layout'
 import { Avatar } from '@/components/avatar'
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useDebounced } from '@/hooks/use-debounced'
 import { openDm, searchUsersQuery } from '@/lib/api'
 
-/** Finds people by name or username as you type and opens the DM. `trigger` is the element that opens the dialog. */
-export function NewChatDialog({ trigger }: { trigger: ReactElement }) {
-  const [open, setOpen] = useState(false)
+/** Finds people by name or username as you type and opens the DM. Loaded on demand by `NewChat`. */
+export default function NewChatDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const [search, setSearch] = useState('')
   const navigate = useNavigate()
 
@@ -25,7 +30,7 @@ export function NewChatDialog({ trigger }: { trigger: ReactElement }) {
   const start = useMutation({
     mutationFn: (username: string) => openDm(username),
     onSuccess: async ({ chatId }) => {
-      setOpen(false)
+      onOpenChange(false)
       await navigate({ to: '/c/$chatId', params: { chatId } })
     },
   })
@@ -34,14 +39,13 @@ export function NewChatDialog({ trigger }: { trigger: ReactElement }) {
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        setOpen(next)
+        onOpenChange(next)
         if (!next) {
           setSearch('')
           start.reset()
         }
       }}
     >
-      <DialogTrigger render={trigger} />
       <DialogContent className="gap-5 rounded-[22px] border-2 border-ink p-7 shadow-[6px_6px_0_var(--color-ink)] ring-0 sm:max-w-[420px]">
         <div className="flex flex-col gap-1.5">
           <DialogTitle className="text-[28px] leading-8 font-extrabold tracking-[-0.03em]">New chat</DialogTitle>

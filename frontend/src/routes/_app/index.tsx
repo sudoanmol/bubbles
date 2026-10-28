@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { NewChatDialog } from '@/components/new-chat-dialog'
-import { Button } from '@/components/ui/button'
+import { NewChat } from '@/components/new-chat'
 
 export const Route = createFileRoute('/_app/')({
   component: Home,
@@ -22,7 +21,7 @@ function Home() {
         <h1 className="font-display text-[40px] leading-[44px] font-extrabold tracking-[-0.03em]">Pick a chat</h1>
         <p className="text-base leading-6 text-muted-foreground">Or start a new one with a friend's username.</p>
       </div>
-      <NewChatDialog trigger={<Button className="h-[52px]">Start a chat</Button>} />
+      <NewChat variant="cta" />
     </div>
   )
 }
