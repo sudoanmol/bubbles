@@ -8,6 +8,7 @@ import { Logo } from '@/components/logo'
 import { NewChat } from '@/components/new-chat'
 import { inboxQuery } from '@/lib/api'
 import { sessionQuery, signOut as requestSignOut, type Session } from '@/lib/session'
+import { deleteStore } from '@/lib/store'
 import { formatShort } from '@/lib/time'
 
 export function Sidebar({ user, className }: { user: Session['user']; className?: string }) {
@@ -19,6 +20,8 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
   const signOut = useMutation({
     mutationFn: requestSignOut,
     onSuccess: async () => {
+      // Nothing of this account stays on the device.
+      await deleteStore()
       queryClient.clear()
       queryClient.setQueryData(sessionQuery.queryKey, null)
       await navigate({ to: '/login', search: { mode: 'signin' } })

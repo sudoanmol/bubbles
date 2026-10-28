@@ -40,5 +40,3 @@ export type InboxItem = {
 }
 
 export type Chat = { id: string; members: Profile[] }
-
-export type MessagePage = { messages: Message[]; hasOlder: boolean }

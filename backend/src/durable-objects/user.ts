@@ -37,7 +37,16 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     return new Response(null, { status: 101, webSocket: client })
   }
 
-  async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
+  // Frames from a socket are handled one at a time, so a burst (an outbox replay) keeps its order in the chat.
+  // ponytail: one queue per user across all chats; per-chat queues if one slow chat ever holds up the others.
+  queue = Promise.resolve()
+
+  webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
+    this.queue = this.queue.then(() => this.handle(ws, data)).catch((error) => console.error(error))
+    return this.queue
+  }
+
+  async handle(ws: WebSocket, data: string | ArrayBuffer) {
     let frame: ClientFrame
     try {
       frame = v.parse(ClientFrame, JSON.parse(data as string))

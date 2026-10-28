@@ -19,20 +19,22 @@ frontend/   Worker `bubbles` (public): single-page app on TanStack Router, React
   src/worker.ts           the Worker: static assets first, then /api/* → `API` service binding
   src/routes/_app*        signed-in shell (inbox + open chat); `/`, `/c/$chatId`, `/@{$username}`
   src/hooks/              shared React hooks
-  src/lib/                api + query cache helpers, socket client, auth, time formatting
+  src/lib/                api + sync (api.ts), IndexedDB store (store.ts), socket + outbox (socket.ts), session, auth, time
+tests/chaos.ts  chaos test for the delivery protocol (`pnpm chaos`)
   src/components/ui/      shadcn components; we own and restyle them
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
-| Task                 | Command (from the root)                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------- |
-| Install              | `pnpm install`                                                                                            |
-| Sign in as any user  | Open `http://localhost:3100/api/dev/login/<username>` (local only; for testing two accounts side by side) |
-| Dev (both workers)   | `pnpm dev` (app on :3100, API on :8790; the API restarts when `.env` changes)                             |
-| Typecheck            | `pnpm typecheck`                                                                                          |
-| Build                | `pnpm build`                                                                                              |
-| Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged)                  |
-| Worker binding types | `pnpm -C <pkg> cf-typegen` after editing that package's `wrangler.jsonc`                                  |
+| Task                 | Command (from the root)                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Install              | `pnpm install`                                                                                                               |
+| Chaos test           | `pnpm chaos` with `pnpm dev` running (edits and reverts `backend/src/index.ts` to redeploy mid-run; `REDEPLOY=0` skips that) |
+| Sign in as any user  | Open `http://localhost:3100/api/dev/login/<username>` (local only; for testing two accounts side by side)                    |
+| Dev (both workers)   | `pnpm dev` (app on :3100, API on :8790; the API restarts when `.env` changes)                                                |
+| Typecheck            | `pnpm typecheck`                                                                                                             |
+| Build                | `pnpm build`                                                                                                                 |
+| Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged)                                     |
+| Worker binding types | `pnpm -C <pkg> cf-typegen` after editing that package's `wrangler.jsonc`                                                     |
 
 Assume the dev server is already running. Verify work with `pnpm typecheck` and `pnpm build`.
 
@@ -121,14 +123,16 @@ client                          UserDO                    ChatDO
   │◀──────────────────────────────│ bump unread; push to sockets, or enqueue a web push
 ```
 
-- **Idempotent sends.** The client generates `cid` (a ULID) and writes the message to its outbox before sending. `UNIQUE(cid)` in ChatDO makes retries harmless. The outbox is replayed on every reconnect.
-- **Gap detection.** The client stores `lastSeq` for each chat. If a message arrives with `seq > lastSeq + 1`, the client fetches `GET /api/chats/:id/messages?after=lastSeq` before rendering it. On reconnect, UserDO returns each chat's `latestSeq`, and gaps are filled lazily when a chat is opened.
+- **Idempotent sends.** The client generates `cid` (a ULID) and writes the message to its outbox (IndexedDB) before sending. `UNIQUE(cid)` in ChatDO makes retries harmless. The outbox is replayed, in write order, on every connect, so it survives going offline and reloads. UserDO handles a socket's frames one at a time so a replayed burst keeps its order.
+- **Gap detection.** A chat's cursor is the end of the unbroken run of `seq`s the client holds. Syncing a chat is `GET /api/chats/:id/messages?after=<cursor>`; if the client is more than a page behind, the server returns the latest page instead and the client drops its older copy, so what it stores is always one unbroken run. A live message past a gap shows at once and triggers a sync of that chat if it's on screen. On reconnect the client refetches the inbox and syncs the chats on screen; other chats sync when opened.
 - **Deploys are routine.** A deploy drops sockets. The client reconnects, replays its outbox and fills any gaps.
 - **Edits and deletes** are new events with a new `seq` (deletes are tombstones), so the gap logic covers them too.
 - **Ephemeral events** (typing, presence) travel the same path but are never stored. Typing is throttled to one event every 3 seconds.
 - **Known limits:** each DO lives in one location (near where it was created). A single DO handles roughly 1k req/s. Fan-out happens on every send, so groups are capped at about 256 members. Mark these limits with `ponytail:` comments in the code.
 
 ### Data model
+
+- **Client (IndexedDB, one database per account, `bubbles-<uid>`):** `messages` (keyed `[chat, seq]`), `outbox` (by `cid`), `inbox`, `chats`. TanStack Query is the store the UI reads; every change is written through, and the cache is filled from here on start so the app renders before the network answers. The session is remembered in `localStorage` and revalidated in the background. Signing out deletes the database.
 
 - **D1:** Better Auth's `user` (plus `username` and `displayUsername`), `session`, `account`, `verification`.
 - **UserDO SQLite:** `inbox(chat_id, last_seq, read_seq, unread, preview, updated_at)`, `push_sub(endpoint, keys)`.
@@ -149,14 +153,14 @@ Each phase lists what to build and when it counts as done.
 
 ## Performance budget
 
-| Metric                                    | Target             | How it's measured                                                                                                                                                                    |
-| ----------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 147 KB after dropping TanStack Start; React (71) + TanStack Router (30) are the floor |
-| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                                |
-| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                                            |
-| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                                             |
-| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                                     |
-| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                                        |
+| Metric                                    | Target             | How it's measured                                                                                                                                                    |
+| ----------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 149 KB after phase 2; React (71) + TanStack Router (30) are the floor |
+| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                |
+| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                            |
+| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                             |
+| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                     |
+| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                        |
 
 ## Differentiators (each needs proof, not just a claim)
 

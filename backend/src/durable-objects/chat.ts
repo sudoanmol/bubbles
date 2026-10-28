@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 
-import type { Message, MessagePage } from '../protocol'
+import type { Message } from '../protocol'
 
 const PAGE = 50
 
@@ -65,19 +65,31 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
     return msg
   }
 
-  /** The latest page, or the page before `before` when scrolling back through history. */
-  messages(uid: string, before = Number.MAX_SAFE_INTEGER): MessagePage | null {
+  /**
+   * Pages of history in ascending `seq`. `after` returns what came after a client's cursor (gap repair); if the client
+   * is more than a page behind it gets the latest page instead and drops its older copy. `before` scrolls back.
+   */
+  messages(uid: string, { before, after }: { before?: number; after?: number } = {}): Message[] | null {
     if (!this.members(uid)) return null
-    const messages = this.sql
+    if (after !== undefined) {
+      const newer = this.sql
+        .exec<Message>(
+          'SELECT ?1 AS chat, * FROM message WHERE seq > ?2 ORDER BY seq LIMIT ?3',
+          this.id,
+          after,
+          PAGE + 1
+        )
+        .toArray()
+      if (newer.length <= PAGE) return newer
+    }
+    return this.sql
       .exec<Message>(
         'SELECT ?1 AS chat, * FROM message WHERE seq < ?2 ORDER BY seq DESC LIMIT ?3',
         this.id,
-        before,
-        PAGE + 1
+        before ?? Number.MAX_SAFE_INTEGER,
+        PAGE
       )
       .toArray()
-    const hasOlder = messages.length > PAGE
-    if (hasOlder) messages.pop()
-    return { messages: messages.reverse(), hasOlder }
+      .reverse()
   }
 }

@@ -1,16 +1,22 @@
-import { createFileRoute, Outlet, redirect, useMatch } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
+import { createFileRoute, Outlet, redirect, useMatch, useRouter } from '@tanstack/react-router'
 import { useEffect } from 'react'
 
 import { Sidebar } from '@/components/sidebar'
+import { hydrateInbox } from '@/lib/api'
 import { sessionQuery } from '@/lib/session'
 import { connect } from '@/lib/socket'
+import { openStore } from '@/lib/store'
 
 /** Signed-in shell: the inbox beside the open chat, and the device's one socket. */
 export const Route = createFileRoute('/_app')({
-  beforeLoad: async ({ context }) => {
-    const session = await context.queryClient.ensureQueryData(sessionQuery)
+  beforeLoad: async ({ context: { queryClient } }) => {
+    // The remembered session renders the app at once; the server's answer arrives in the background.
+    const session = await queryClient.ensureQueryData({ ...sessionQuery, revalidateIfStale: true })
     if (!session) throw redirect({ to: '/login', search: { mode: 'signin' } })
     if (!session.user.username) throw redirect({ to: '/login/username' })
+    openStore(session.user.id)
+    await hydrateInbox(queryClient)
     return { user: session.user }
   },
   component: AppLayout,
@@ -18,9 +24,16 @@ export const Route = createFileRoute('/_app')({
 
 function AppLayout() {
   const { user, queryClient } = Route.useRouteContext()
+  const router = useRouter()
   const inChat = useMatch({ from: '/_app/c/$chatId', shouldThrow: false })
+  const session = useQuery(sessionQuery)
 
   useEffect(() => connect(queryClient), [queryClient])
+
+  // Signed out elsewhere, or the session expired: run the guard again, which sends us to /login.
+  useEffect(() => {
+    if (session.data === null) void router.invalidate()
+  }, [session.data, router])
 
   return (
     <div className="flex h-dvh">

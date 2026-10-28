@@ -10,13 +10,15 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "prepare": "husky"
+    "prepare": "husky",
+    "chaos": "node tests/chaos.ts"
   },
   "devDependencies": {
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "oxfmt": "^0.74.0",
-    "oxlint": "^1.89.0"
+    "oxlint": "^1.89.0",
+    "ulid": "^3.0.2"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [

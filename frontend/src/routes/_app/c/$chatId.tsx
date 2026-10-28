@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
+import type { Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon } from 'lucide-react'
@@ -19,12 +20,16 @@ import {
   MessageScrollerViewport,
   useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller'
-import { api, chatQuery, messagesQuery, type LocalMessage, type Messages } from '@/lib/api'
+import { api, chatQuery, hydrateChat, merge, messagesQuery, PAGE, type LocalMessage } from '@/lib/api'
+import { cachedOlder, saveMessages } from '@/lib/store'
 import { formatDay, formatTime } from '@/lib/time'
 
 export const Route = createFileRoute('/_app/c/$chatId')({
-  loader: ({ context: { queryClient }, params: { chatId } }) =>
-    Promise.all([queryClient.ensureQueryData(chatQuery(chatId)), queryClient.ensureQueryData(messagesQuery(chatId))]),
+  // The local copy renders first; the network only blocks a chat this device has never opened.
+  loader: async ({ context: { queryClient }, params: { chatId } }) => {
+    await hydrateChat(queryClient, chatId)
+    await queryClient.ensureQueryData(chatQuery(chatId))
+  },
   component: ChatView,
   errorComponent: ErrorState,
 })
@@ -57,15 +62,14 @@ function ChatView() {
 }
 
 function MessageList({ chatId, uid }: { chatId: string; uid: string }) {
-  const { data } = useSuspenseQuery(messagesQuery(chatId))
-  const { messages } = data
+  const { data: messages } = useSuspenseQuery(messagesQuery(chatId))
   const lastMine = messages.findLast((m) => m.sender === uid)
 
   return (
     <MessageScroller className="flex-1">
       <MessageScrollerViewport preserveScrollOnPrepend aria-label="Messages">
         <MessageScrollerContent className="justify-end gap-1.5 p-4 md:p-7">
-          <LoadOlder chatId={chatId} data={data} />
+          <LoadOlder chatId={chatId} messages={messages} />
           {messages.length === 0 && (
             <p className="m-auto text-center text-sm text-muted-foreground">No messages yet. Say hi!</p>
           )}
@@ -134,28 +138,33 @@ function Status({ message }: { message: LocalMessage }) {
   return <MessageFooter>{message.seq === null ? 'Sending…' : `Sent ${formatTime(message.ts)}`}</MessageFooter>
 }
 
-/** Loads the previous page when the user scrolls to the top. */
-function LoadOlder({ chatId, data }: { chatId: string; data: Messages }) {
+/** Loads the previous page when the user scrolls to the top: from the local copy if it has it, else the server. */
+function LoadOlder({ chatId, messages }: { chatId: string; messages: LocalMessage[] }) {
   const queryClient = useQueryClient()
   const { start } = useMessageScrollerScrollable()
-  const oldest = data.messages.find((m) => m.seq !== null)?.seq
+  const oldest = messages.find((m) => m.seq !== null)?.seq ?? undefined
+  const hasOlder = oldest !== undefined && oldest > 1
 
   const load = useMutation({
-    mutationFn: () => api<Messages>(`/chats/${chatId}/messages?before=${oldest}`),
+    mutationFn: async (before: number) => {
+      const local = await cachedOlder(chatId, before, PAGE)
+      if (local.length) return local
+      const page = await api<Stored[]>(`/chats/${chatId}/messages?before=${before}`)
+      void saveMessages(chatId, page)
+      return page
+    },
     onSuccess: (page) => {
       load.reset()
-      queryClient.setQueryData<Messages>(messagesQuery(chatId).queryKey, (cur) =>
-        cur ? { messages: [...page.messages, ...cur.messages], hasOlder: page.hasOlder } : cur
-      )
+      queryClient.setQueryData<LocalMessage[]>(messagesQuery(chatId).queryKey, (cur) => cur && merge(cur, page))
     },
   })
 
   const atTop = !start
   useEffect(() => {
-    if (atTop && data.hasOlder && oldest && load.isIdle) load.mutate()
-  }, [atTop, data.hasOlder, oldest, load])
+    if (atTop && hasOlder && load.isIdle) load.mutate(oldest)
+  }, [atTop, hasOlder, oldest, load])
 
-  if (!data.hasOlder) return null
+  if (!hasOlder) return null
   return (
     <p className="py-2 text-center text-xs text-muted-foreground">
       {load.isError ? 'Could not load older messages' : 'Loading…'}
