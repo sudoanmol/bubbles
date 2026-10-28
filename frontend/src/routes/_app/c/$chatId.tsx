@@ -183,7 +183,7 @@ function Composer({ chatId, uid, placeholder }: { chatId: string; uid: string; p
         send()
       }}
     >
-      <div className="flex items-end gap-2.5 rounded-[18px] border-2 border-ink bg-paper py-2 pr-2 pl-5 shadow-sticker focus-within:shadow-[3px_3px_0_var(--color-cobalt)]">
+      <div className="flex items-end gap-2.5 rounded-[18px] border-2 border-ink bg-paper py-2 pr-2 pl-5 shadow-sticker">
         <textarea
           aria-label={placeholder}
           placeholder={placeholder}
