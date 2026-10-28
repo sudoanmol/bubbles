@@ -80,7 +80,7 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 - Sign-in methods: email or username plus a password (the login form takes either one), and Google OAuth.
 - Every user must have a username. Users who sign in with Google have none at first, so the frontend route guard sends them to `/login/username`. That page pre-fills the username from the local part of their email (for `jane.doe@gmail.com`, it suggests `jane.doe`). The user can change it, availability is checked live, and the page then redirects to `/`.
 - Usernames: 3–30 characters, letters, digits, `_` and `.`, stored lowercase (plugin defaults).
-- The schema is generated, never hand-written: `pnpm -C backend auth:generate` writes the Drizzle schema, then `pnpm -C backend db:generate` writes the SQL migration, then `pnpm -C backend db:migrate` applies it to local D1.
+- The schema is generated, never hand-written: `pnpm -C backend auth:generate` writes the Drizzle schema, then `pnpm -C backend db:generate` writes the SQL migration, then `pnpm -C backend db:migrate` applies it to local D1 (`pnpm dev` also applies pending local migrations on start).
 - The frontend reads the session through TanStack Query (`sessionQuery`). Route guards in `beforeLoad` call `ensureQueryData`. After any auth change, refetch the session before navigating.
 
 ### Routes

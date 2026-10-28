@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch-path=../.env --watch-preserve-output node_modules/wrangler/bin/wrangler.js dev --env-file ../.env",
+    "dev": "pnpm db:migrate && node --watch-path=../.env --watch-preserve-output node_modules/wrangler/bin/wrangler.js dev --env-file ../.env",
     "deploy": "wrangler deploy --minify",
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types --env-file ../.env --env-interface CloudflareBindings",
