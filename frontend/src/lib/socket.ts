@@ -1,12 +1,12 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { ServerFrame, type ClientFrame, type Message } from 'backend/protocol'
+import { applyPatch, ServerFrame, type Message, type Patch } from 'backend/protocol'
 import { WebSocket } from 'partysocket'
 import { useSyncExternalStore } from 'react'
 import { monotonicFactory } from 'ulid'
 import * as v from 'valibot'
 
-import { bumpInbox, cursor, inboxQuery, messagesQuery, upsertMessage, type LocalMessage } from './api'
-import { ackOutbox, allOutbox, deleteOutbox, failOutbox, saveMessages, saveOutbox } from './store'
+import { bumpInbox, cursor, inboxQuery, messagesQuery, upsertMessage, type LocalMessage, type Pending } from './api'
+import { allOutbox, cachedMessage, deleteOutbox, failOutbox, saveMessages, saveOutbox } from './store'
 
 let socket: WebSocket | null = null
 // Monotonic so two messages written in the same millisecond still sort, and replay, in the order they were written.
@@ -35,13 +35,14 @@ export function useConnection() {
   )
 }
 
-const frame = (m: LocalMessage) =>
-  JSON.stringify({ t: 'send', chat: m.chat, cid: m.cid, body: m.body } satisfies ClientFrame)
+/** The wire frame of an outbox entry, without the local-only fields. */
+const frame = (p: Pending) =>
+  JSON.stringify(p, (key, value) => (key === 'failed' || key === 'local' ? undefined : value))
 
-/** Sends now if connected; offline, the message waits in the outbox for the next connect. */
-const send = (m: LocalMessage) =>
+/** Sends now if connected; offline, the frame waits in the outbox for the next connect. */
+const send = (p: Pending) =>
   void replayed.then(() => {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(frame(m))
+    if (socket?.readyState === WebSocket.OPEN) socket.send(frame(p))
   })
 
 /** Opens the device's single socket (held by the user's UserDO) and feeds frames into the cache and the store. */
@@ -72,17 +73,14 @@ export function connect(queryClient: QueryClient) {
     const f = parsed.output
     switch (f.t) {
       case 'ack':
-        upsertMessage(queryClient, f.chat, { cid: f.cid, seq: f.seq, ts: f.ts, failed: false })
-        void ackOutbox(f.cid, f.seq, f.ts)
+        upsertMessage(queryClient, f.msg.chat, { ...f.msg, failed: false })
+        void saveMessages(f.msg.chat, [f.msg])
         break
       case 'msg':
         receive(queryClient, f.msg)
         break
       case 'error':
-        if (f.cid) {
-          markFailed(queryClient, f.cid)
-          void failOutbox(f.cid)
-        }
+        if (f.cid) void refused(queryClient, f.cid)
         break
     }
   })
@@ -107,19 +105,66 @@ function receive(queryClient: QueryClient, msg: Message) {
 }
 
 /** Sends a message optimistically. It goes to the outbox first, so it survives a reload or going offline. */
-export function sendMessage(queryClient: QueryClient, chat: string, sender: string, body: string) {
-  const message: LocalMessage = { chat, cid: ulid(), sender, body, seq: null, ts: Date.now() }
-  upsertMessage(queryClient, chat, message)
-  void saveOutbox(message)
-  send(message)
+export function sendMessage(
+  queryClient: QueryClient,
+  chat: string,
+  sender: string,
+  body: string,
+  replyTo?: LocalMessage
+) {
+  const cid = ulid()
+  const reply = replyTo?.seq ? { seq: replyTo.seq, sender: replyTo.sender, body: replyTo.body.slice(0, 200) } : null
+  const local: LocalMessage = {
+    chat,
+    cid,
+    sender,
+    body,
+    reply,
+    seq: null,
+    ts: Date.now(),
+    kind: 'text',
+    target: null,
+    edited: null,
+    deleted: false,
+    reactions: {},
+    rev: 0,
+  }
+  const pending: Pending = { t: 'send', chat, cid, body, reply: reply?.seq, local }
+  upsertMessage(queryClient, chat, local)
+  void saveOutbox(pending)
+  send(pending)
+}
+
+/** Edits, deletes or reacts to a message: shown at once, sent through the outbox like a message. */
+export function patchMessage(
+  queryClient: QueryClient,
+  uid: string,
+  target: LocalMessage,
+  change: Patch extends infer P ? (P extends Patch ? Omit<P, 'cid' | 'chat' | 'seq'> : never) : never
+) {
+  if (target.seq === null) return
+  const pending = { ...change, cid: ulid(), chat: target.chat, seq: target.seq } as Patch
+  const next = applyPatch(target, pending, uid, Date.now())
+  if (typeof next === 'string') return
+  upsertMessage(queryClient, target.chat, { cid: target.cid, ...next })
+  void saveOutbox(pending)
+  send(pending)
 }
 
 /** Sends a message the server refused once more. */
 export function retryMessage(queryClient: QueryClient, message: LocalMessage) {
   const retried = { ...message, failed: false }
+  const pending: Pending = {
+    t: 'send',
+    chat: message.chat,
+    cid: message.cid,
+    body: message.body,
+    reply: message.reply?.seq,
+    local: retried,
+  }
   upsertMessage(queryClient, message.chat, retried)
-  void saveOutbox(retried)
-  send(retried)
+  void saveOutbox(pending)
+  send(pending)
 }
 
 /** Drops a message that was never sent. */
@@ -130,8 +175,17 @@ export function discardMessage(queryClient: QueryClient, message: LocalMessage) 
   void deleteOutbox(message.cid)
 }
 
-function markFailed(queryClient: QueryClient, cid: string) {
-  for (const [key] of queryClient.getQueriesData({ queryKey: ['messages'] })) {
-    upsertMessage(queryClient, key[1] as string, { cid, failed: true })
-  }
+/**
+ * The server refused a frame. A message stays, marked "Not sent", for Retry or Delete. A change is dropped and the
+ * message goes back to the last state the server confirmed.
+ */
+async function refused(queryClient: QueryClient, cid: string) {
+  const pending = await failOutbox(cid)
+  if (!pending) return
+  if (pending.t === 'send') return upsertMessage(queryClient, pending.chat, { cid, failed: true })
+  // ponytail: a change refused for a passing reason (the chat was briefly unreachable) is dropped too; retry it if
+  // that turns out to happen.
+  void deleteOutbox(cid)
+  const confirmed = await cachedMessage(pending.chat, pending.seq)
+  if (confirmed) upsertMessage(queryClient, pending.chat, confirmed)
 }

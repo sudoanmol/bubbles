@@ -72,9 +72,11 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
                 {item.peer.name}
               </span>
               <span className="truncate text-sm leading-[18px] text-muted-foreground group-data-[status=active]:text-paper/65">
-                {item.preview
-                  ? `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`
-                  : `@${item.peer.username}`}
+                {!item.preview
+                  ? `@${item.peer.username}`
+                  : item.preview.deleted
+                    ? 'Message deleted'
+                    : `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`}
               </span>
             </div>
             <span className="shrink-0 self-start pt-0.5 text-right text-xs whitespace-nowrap text-muted-foreground group-data-[status=active]:text-paper/65">

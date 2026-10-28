@@ -1,7 +1,16 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
-import type { Chat, InboxItem, Message, Profile } from 'backend/protocol'
+import { applyPatch, type Chat, type ClientFrame, type InboxItem, type Message, type Profile } from 'backend/protocol'
 
-import { cachedChat, cachedInbox, cachedMessages, saveChat, saveInbox, saveInboxItem, saveMessages } from './store'
+import {
+  cachedChat,
+  cachedInbox,
+  cachedMessages,
+  currentUid,
+  saveChat,
+  saveInbox,
+  saveInboxItem,
+  saveMessages,
+} from './store'
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, init)
@@ -13,8 +22,25 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 /** Page size of the history API (ChatDO's PAGE). */
 export const PAGE = 50
 
-/** A message as the client sees it: `seq` is null until the server acks it. */
+/** A log entry as the client sees it: `seq` is null until the server acks it. */
 export type LocalMessage = Omit<Message, 'seq'> & { seq: number | null; failed?: boolean }
+
+/** An outbox entry: a frame the server has not acked. A send keeps the message to show meanwhile. */
+export type Pending = ClientFrame & { failed?: boolean; local?: LocalMessage }
+
+/** The held log with this device's unsent frames on top: sends as pending messages, changes applied. */
+export function withPending(messages: LocalMessage[], pending: Pending[], uid: string) {
+  let out = messages
+  for (const p of pending) {
+    if (p.t === 'send') out = merge(out, [{ ...p.local!, failed: p.failed }])
+    else {
+      const target = out.find((m) => m.seq === p.seq && m.kind === 'text')
+      const next = target && applyPatch(target, p, uid, Date.now())
+      if (next && typeof next !== 'string') out = merge(out, [{ cid: target.cid, ...next }])
+    }
+  }
+  return out
+}
 
 export const inboxQuery = queryOptions({
   queryKey: ['inbox'],
@@ -53,7 +79,7 @@ export const messagesQuery = (chat: string) =>
   queryOptions({
     queryKey: ['messages', chat],
     queryFn: async ({ client, queryKey }): Promise<LocalMessage[]> => {
-      const held = client.getQueryData<LocalMessage[]>(queryKey) ?? (await cachedMessages(chat, 2 * PAGE))
+      const held = client.getQueryData<LocalMessage[]>(queryKey) ?? (await local(chat))
       const hi = cursor(held)
       const page = await api<Message[]>(`/chats/${chat}/messages${hi === undefined ? '' : `?after=${hi}`}`)
       // More than a page behind: the server sent the latest page instead, so drop our older copy.
@@ -89,10 +115,16 @@ export async function hydrateChat(queryClient: QueryClient, id: string) {
   const { queryKey } = messagesQuery(id)
   const [chat, messages] = await Promise.all([
     queryClient.getQueryData(chatKey) ? undefined : cachedChat(id),
-    queryClient.getQueryData(queryKey) ? [] : cachedMessages(id, 2 * PAGE),
+    queryClient.getQueryData(queryKey) ? [] : local(id),
   ])
   if (chat && !queryClient.getQueryData(chatKey)) queryClient.setQueryData(chatKey, chat)
   if (messages.length && !queryClient.getQueryData(queryKey)) queryClient.setQueryData(queryKey, messages)
+}
+
+/** A chat as this device holds it, unsent changes included. */
+async function local(chat: string) {
+  const [acked, pending] = await cachedMessages(chat, 2 * PAGE)
+  return withPending(acked, pending, currentUid())
 }
 
 /**
@@ -109,13 +141,26 @@ export function cursor(messages: LocalMessage[]) {
   return hi
 }
 
-/** Merges by `cid`: acked messages in `seq` order, unsent ones after them in the order they were written. */
+/**
+ * Merges by `cid`: acked entries in `seq` order, unsent ones after them in the order they were written. A copy of a
+ * message never replaces a newer one (higher `rev`), and a patch updates the message it changed if that is held.
+ */
 export function merge(messages: LocalMessage[], incoming: (Partial<LocalMessage> & { cid: string })[]) {
   const byCid = new Map(messages.map((m) => [m.cid, m]))
+  const bySeq = new Map(messages.flatMap((m) => (m.seq === null ? [] : [[m.seq, m.cid]])))
   for (const m of incoming) {
     const prev = byCid.get(m.cid)
     // A partial update (an ack) for a message we don't hold has nothing to apply to.
-    if (prev || m.body !== undefined) byCid.set(m.cid, { ...prev, ...m } as LocalMessage)
+    if (!prev && m.body === undefined) continue
+    if (prev?.seq != null && m.rev !== undefined && prev.rev > m.rev) continue
+    const next = { ...prev, ...m } as LocalMessage
+    byCid.set(m.cid, next)
+    if (next.seq !== null) bySeq.set(next.seq, next.cid)
+    const target = next.kind === 'patch' && next.seq !== null && byCid.get(bySeq.get(next.target!) ?? '')
+    if (target && next.seq! > target.rev) {
+      const { body, reply, edited, deleted, reactions } = next
+      byCid.set(target.cid, { ...target, body, reply, edited, deleted, reactions, rev: next.seq! })
+    }
   }
   return [...byCid.values()].sort(
     (a, b) => (a.seq ?? Infinity) - (b.seq ?? Infinity) || (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0)
@@ -127,7 +172,10 @@ export function upsertMessage(queryClient: QueryClient, chat: string, msg: Parti
   queryClient.setQueryData<LocalMessage[]>(messagesQuery(chat).queryKey, (data) => data && merge(data, [msg]))
 }
 
-/** Moves a chat to the top of the inbox with a new preview. Returns false if the chat is not in the cache yet. */
+/**
+ * Keeps the inbox in step with a live log entry, as UserDO does: a new message moves the chat to the top as its
+ * preview; a change to the previewed message updates the preview. Returns false if the chat is not in the cache yet.
+ */
 export function bumpInbox(queryClient: QueryClient, msg: Message) {
   let found = false
   queryClient.setQueryData<InboxItem[]>(inboxQuery.queryKey, (items) => {
@@ -135,7 +183,15 @@ export function bumpInbox(queryClient: QueryClient, msg: Message) {
     if (!items || !item) return items
     found = true
     if (msg.seq <= item.lastSeq) return items
-    const updated = { ...item, lastSeq: msg.seq, preview: { sender: msg.sender, body: msg.body }, updatedAt: msg.ts }
+    if (msg.kind === 'patch') {
+      const preview =
+        item.preview?.seq === msg.target ? { ...item.preview, body: msg.body, deleted: msg.deleted } : item.preview
+      const updated = { ...item, lastSeq: msg.seq, preview }
+      void saveInboxItem(updated)
+      return items.map((i) => (i === item ? updated : i))
+    }
+    const preview = { seq: msg.seq, sender: msg.sender, body: msg.body, deleted: false }
+    const updated = { ...item, lastSeq: msg.seq, preview, updatedAt: msg.ts }
     void saveInboxItem(updated)
     return [updated, ...items.filter((i) => i !== item)]
   })

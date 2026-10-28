@@ -3,12 +3,13 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import type { Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
-import { ArrowLeftIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
+import { ArrowLeftIcon, BanIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 
 import { Avatar } from '@/components/avatar'
-import { Composer } from '@/components/composer'
+import { Composer, type ComposerMode } from '@/components/composer'
 import { ErrorState } from '@/components/error-state'
+import { MessageActions, Reactions } from '@/components/message-actions'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Message, MessageContent, MessageFooter, MessageGroup } from '@/components/ui/message'
 import {
@@ -18,9 +19,10 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from '@/components/ui/message-scroller'
 import { api, chatQuery, hydrateChat, merge, messagesQuery, PAGE, type LocalMessage } from '@/lib/api'
-import { discardMessage, retryMessage, useConnection } from '@/lib/socket'
+import { discardMessage, patchMessage, retryMessage, useConnection } from '@/lib/socket'
 import { cachedOlder, saveMessages } from '@/lib/store'
 import { formatDay, formatTime } from '@/lib/time'
 
@@ -39,6 +41,10 @@ function ChatView() {
   const { user } = Route.useRouteContext()
   const { data: chat } = useSuspenseQuery(chatQuery(chatId))
   const peer = chat.members.find((m) => m.id !== user.id) ?? chat.members[0]
+  const [mode, setMode] = useState<ComposerMode>(null)
+  // A reply or edit started in another chat doesn't follow you here.
+  const active = mode?.message.chat === chatId ? mode : null
+  const names = new Map(chat.members.map((m) => [m.id, m.id === user.id ? 'You' : m.name.split(' ')[0]]))
 
   // Keyed so scroll position, load state and the draft reset when switching chats.
   return (
@@ -56,22 +62,43 @@ function ChatView() {
       {/* autoScroll keeps the view pinned to the newest message while you are at the bottom, through layout
           shifts (fonts, older pages, new messages); scrolling up releases it. */}
       <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
-        <MessageList chatId={chatId} uid={user.id} />
+        <MessageList chatId={chatId} uid={user.id} names={names} onMode={setMode} />
       </MessageScrollerProvider>
-      <Composer chatId={chatId} uid={user.id} placeholder={`Message ${peer.name.split(' ')[0]}`} />
+      <Composer
+        chatId={chatId}
+        uid={user.id}
+        placeholder={`Message ${peer.name.split(' ')[0]}`}
+        names={names}
+        mode={active}
+        onMode={setMode}
+      />
     </Fragment>
   )
 }
 
-function MessageList({ chatId, uid }: { chatId: string; uid: string }) {
-  const { data: messages } = useSuspenseQuery(messagesQuery(chatId))
-  const lastMine = messages.findLast((m) => m.sender === uid)
+function MessageList({
+  chatId,
+  uid,
+  names,
+  onMode,
+}: {
+  chatId: string
+  uid: string
+  names: Map<string, string>
+  onMode: (mode: ComposerMode) => void
+}) {
+  const queryClient = useQueryClient()
+  const { data: log } = useSuspenseQuery(messagesQuery(chatId))
+  // Patches stay in the log (they keep the cursor's run unbroken) but are already folded into their messages.
+  const messages = log.filter((m) => m.kind === 'text')
+  const lastMine = messages.findLast((m) => m.sender === uid && !m.deleted)
+  const { scrollToMessage } = useMessageScroller()
 
   return (
     <MessageScroller className="flex-1">
       <MessageScrollerViewport preserveScrollOnPrepend aria-label="Messages">
         <MessageScrollerContent className="justify-end gap-1.5 p-4 md:p-7">
-          <LoadOlder chatId={chatId} messages={messages} />
+          <LoadOlder chatId={chatId} messages={log} />
           {messages.length === 0 && (
             <p className="m-auto text-center text-sm text-muted-foreground">No messages yet. Say hi!</p>
           )}
@@ -91,28 +118,93 @@ function MessageList({ chatId, uid }: { chatId: string; uid: string }) {
                 <MessageGroup
                   className={cn(prev && prev.sender !== first.sender && isSameDay(prev.ts, first.ts) && 'mt-2')}
                 >
-                  {run.map((m, i) => (
-                    <MessageScrollerItem key={m.cid} messageId={m.cid}>
-                      <Message align={mine ? 'end' : 'start'}>
-                        <MessageContent>
-                          <Bubble variant={mine ? 'outgoing' : 'incoming'} title={formatTime(m.ts)}>
-                            <BubbleContent className={corners(mine, i === 0, i === run.length - 1)}>
-                              {m.body}
-                            </BubbleContent>
-                            {m.failed && (
-                              <span
-                                aria-hidden="true"
-                                className="absolute top-1/2 right-full mr-2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-full bg-danger text-sm leading-4 font-extrabold text-paper"
+                  {run.map((m, i) => {
+                    const react = (emoji: string | null) => patchMessage(queryClient, uid, m, { t: 'react', emoji })
+                    const quoted = m.reply && messages.find((q) => q.seq === m.reply!.seq)
+                    return (
+                      <MessageScrollerItem key={m.cid} messageId={m.cid}>
+                        <Message align={mine ? 'end' : 'start'}>
+                          <MessageContent>
+                            {m.deleted ? (
+                              <div
+                                className={cn(
+                                  'flex w-fit items-center gap-2 rounded-bubble border-[1.5px] border-dashed border-[#c9c9c9] px-4 py-[11px] text-[15px] leading-[22px] text-muted-foreground italic',
+                                  corners(mine, i === 0, i === run.length - 1)
+                                )}
                               >
-                                !
-                              </span>
+                                <BanIcon className="size-[15px] shrink-0" strokeWidth={2.25} aria-hidden="true" />
+                                {mine
+                                  ? 'You deleted this message'
+                                  : `${names.get(m.sender) ?? 'They'} deleted this message`}
+                              </div>
+                            ) : (
+                              <Bubble variant={mine ? 'outgoing' : 'incoming'} title={formatTime(m.ts)}>
+                                <BubbleContent
+                                  className={cn(corners(mine, i === 0, i === run.length - 1), m.reply && 'p-2 pb-3')}
+                                >
+                                  {m.reply && (
+                                    <button
+                                      type="button"
+                                      onClick={() => quoted && scrollToMessage(quoted.cid, { behavior: 'smooth' })}
+                                      className={cn(
+                                        'mb-2 flex w-full min-w-0 flex-col gap-0.5 rounded-[6px_14px_14px_6px] border-l-[3px] py-1.5 pr-3 pl-2.5 text-left',
+                                        mine ? 'border-paper bg-ink/18' : 'border-cobalt bg-wash'
+                                      )}
+                                    >
+                                      <span
+                                        className={cn(
+                                          'text-[13px] leading-4 font-bold',
+                                          mine ? 'text-paper' : 'text-cobalt'
+                                        )}
+                                      >
+                                        {names.get(m.reply.sender) ?? 'Someone'}
+                                      </span>
+                                      <span
+                                        className={cn(
+                                          'line-clamp-2 text-sm leading-[18px]',
+                                          mine ? 'text-paper/80' : 'text-muted-foreground'
+                                        )}
+                                      >
+                                        {m.reply.body}
+                                      </span>
+                                    </button>
+                                  )}
+                                  {m.reply ? <div className="px-2">{m.body}</div> : m.body}
+                                </BubbleContent>
+                                {m.failed && (
+                                  <span
+                                    aria-hidden="true"
+                                    className="absolute top-1/2 right-full mr-2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-full bg-danger text-sm leading-4 font-extrabold text-paper"
+                                  >
+                                    !
+                                  </span>
+                                )}
+                                {m.seq !== null && (
+                                  <MessageActions
+                                    message={m}
+                                    mine={mine}
+                                    uid={uid}
+                                    onReact={react}
+                                    onReply={() => onMode({ t: 'reply', message: m })}
+                                    onEdit={() => onMode({ t: 'edit', message: m })}
+                                    onDelete={() => {
+                                      if (confirm('Delete this message for everyone?'))
+                                        patchMessage(queryClient, uid, m, { t: 'delete' })
+                                    }}
+                                  />
+                                )}
+                              </Bubble>
                             )}
-                          </Bubble>
-                          {(m === lastMine || m.failed) && <Status message={m} />}
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                  ))}
+                            {!m.deleted && <Reactions message={m} mine={mine} uid={uid} onReact={react} />}
+                            {(m === lastMine || m.failed) && <Status message={m} />}
+                            {m !== lastMine && !m.failed && !m.deleted && m.edited && (
+                              <MessageFooter>Edited</MessageFooter>
+                            )}
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    )
+                  })}
                 </MessageGroup>
               </Fragment>
             )
@@ -175,7 +267,12 @@ function Status({ message }: { message: LocalMessage }) {
         Waiting for network
       </MessageFooter>
     )
-  return <MessageFooter>{message.seq === null ? 'Sending…' : `Sent ${formatTime(message.ts)}`}</MessageFooter>
+  return (
+    <MessageFooter>
+      {message.edited && 'Edited · '}
+      {message.seq === null ? 'Sending…' : `Sent ${formatTime(message.ts)}`}
+    </MessageFooter>
+  )
 }
 
 /** Loads the previous page when the user scrolls to the top: from the local copy if it has it, else the server. */

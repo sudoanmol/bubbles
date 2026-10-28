@@ -1,6 +1,6 @@
 // Chaos test for the delivery protocol (AGENTS.md, phase 2).
 //
-// Scripted clients DM each other as fast as they can while their sockets are killed at random and, partway through,
+// Scripted clients DM each other as fast as they can (messages, plus edits, deletes and reactions) while their sockets are killed at random and, partway through,
 // the backend is redeployed (locally: a source file is touched, so `wrangler dev` restarts every Durable Object).
 // Clients behave like the app: an outbox replayed on every connect, a cursor per chat, gap repair over HTTP.
 // When the dust settles, every message written must be stored exactly once, each device's messages in the order
@@ -23,11 +23,24 @@ const MESSAGES_PER_DEVICE = 100
 const SEND_EVERY_MS = 40
 const KILL_EVERY_MS = 150
 
-type Message = { chat: string; seq: number; cid: string; sender: string; body: string; ts: number }
-type Frame =
-  | { t: 'ack'; chat: string; cid: string; seq: number; ts: number }
-  | { t: 'msg'; msg: Message }
-  | { t: 'error'; cid?: string; message: string }
+type Message = {
+  chat: string
+  seq: number
+  cid: string
+  sender: string
+  kind: 'text' | 'patch'
+  body: string
+  target: number | null
+  edited: number | null
+  deleted: boolean
+  reactions: Record<string, string>
+  rev: number
+}
+type Frame = { t: 'ack'; msg: Message } | { t: 'msg'; msg: Message } | { t: 'error'; cid?: string; message: string }
+type Out = { t: string; chat: string; cid: string; [k: string]: unknown }
+
+/** What every copy of a message must agree on once the dust settles. */
+const state = (m: Message) => JSON.stringify([m.seq, m.cid, m.kind, m.body, m.edited, m.deleted, m.reactions])
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const pick = <T>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)]
@@ -66,14 +79,18 @@ async function signUp(username: string) {
 
 class Device {
   name: string
+  uid: string
   cookie: string
   chats: string[]
   ulid = monotonicFactory()
   ws: WebSocket | null = null
   /** Written, not yet acked; replayed in write order on every connect. */
-  outbox = new Map<string, { chat: string; cid: string; body: string }>()
-  /** Every cid this device wrote, in write order. */
+  outbox = new Map<string, Out>()
+  /** Every message this device wrote, in write order. */
   written: { chat: string; cid: string }[] = []
+  /** Every edit, delete and reaction this device wrote, and those the server refused (their target was deleted). */
+  patches: string[] = []
+  refused = new Set<string>()
   log = new Map<string, Map<number, Message>>()
   conflicts: string[] = []
   errors: string[] = []
@@ -83,8 +100,9 @@ class Device {
   drops = 0
   killing = false
 
-  constructor(name: string, cookie: string, chats: string[]) {
+  constructor(name: string, uid: string, cookie: string, chats: string[]) {
     this.name = name
+    this.uid = uid
     this.cookie = cookie
     this.chats = chats
     for (const c of chats) this.log.set(c, new Map())
@@ -97,7 +115,7 @@ class Device {
     this.ws = ws
     ws.onopen = () => {
       this.connects++
-      for (const m of this.outbox.values()) ws.send(JSON.stringify({ t: 'send', ...m }))
+      for (const m of this.outbox.values()) ws.send(JSON.stringify(m))
       // Like the app after a reconnect: catch up on what was missed while away.
       for (const c of this.chats) void this.repair(c)
     }
@@ -117,25 +135,65 @@ class Device {
     this.ws.close()
   }
 
-  send(chat: string, body: string) {
-    const m = { chat, cid: this.ulid(), body }
-    this.outbox.set(m.cid, m)
-    this.written.push({ chat, cid: m.cid })
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ t: 'send', ...m }))
+  write(f: Out) {
+    this.outbox.set(f.cid, f)
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(f))
+  }
+
+  /** Mostly new messages; sometimes a reaction to any message, an edit, or a delete of one of this device's own. */
+  act(chat: string, body: string) {
+    const cid = this.ulid()
+    const texts = [...this.log.get(chat)!.values()].filter((m) => m.kind === 'text' && !m.deleted)
+    const own = texts.filter((m) => m.sender === this.uid)
+    const roll = Math.random()
+    if (roll < 0.15 && texts.length) {
+      this.patches.push(cid)
+      return this.write({
+        t: 'react',
+        chat,
+        cid,
+        seq: pick(texts).seq,
+        emoji: roll < 0.03 ? null : pick(['👍', '😂', '🔥']),
+      })
+    }
+    if (roll < 0.25 && own.length) {
+      this.patches.push(cid)
+      return this.write({ t: 'edit', chat, cid, seq: pick(own).seq, body: `${body} (edited)` })
+    }
+    if (roll < 0.28 && own.length) {
+      this.patches.push(cid)
+      return this.write({ t: 'delete', chat, cid, seq: pick(own).seq })
+    }
+    this.written.push({ chat, cid })
+    this.write({ t: 'send', chat, cid, body })
   }
 
   receive(f: Frame) {
-    if (f.t === 'ack') this.outbox.delete(f.cid)
-    if (f.t === 'msg') this.store(f.msg)
-    // The message stays in the outbox and goes again on the next connect.
-    if (f.t === 'error') this.errors.push(f.message)
+    if (f.t === 'ack') this.outbox.delete(f.msg.cid)
+    if (f.t === 'ack' || f.t === 'msg') this.store(f.msg)
+    if (f.t === 'error') {
+      this.errors.push(f.message)
+      // A change to a message someone deleted meanwhile is refused for good, as in the app. A message stays in the
+      // outbox and goes again on the next connect.
+      if (f.cid && f.message === 'That message was deleted') {
+        this.outbox.delete(f.cid)
+        this.refused.add(f.cid)
+      }
+    }
   }
 
+  /** Keeps the entry, and folds a patch into the message it changed (if this copy is older than the patch). */
   store(m: Message) {
     const log = this.log.get(m.chat)!
     const prev = log.get(m.seq)
     if (prev && prev.cid !== m.cid) this.conflicts.push(`${m.chat} seq ${m.seq}: ${prev.cid} then ${m.cid}`)
+    if (prev && prev.rev > m.rev) return
     log.set(m.seq, m)
+    const target = m.kind === 'patch' ? log.get(m.target!) : undefined
+    if (target && m.seq > target.rev) {
+      const { body, edited, deleted, reactions } = m
+      log.set(target.seq, { ...target, body, edited, deleted, reactions, rev: m.seq })
+    }
   }
 
   cursor(chat: string) {
@@ -216,7 +274,10 @@ async function main() {
     chatsOf.get(b.id)!.push(chatId)
   }
   const devices = users.flatMap((u) =>
-    Array.from({ length: DEVICES_PER_USER }, (_, d) => new Device(`${u.username}#${d}`, u.cookie, chatsOf.get(u.id)!))
+    Array.from(
+      { length: DEVICES_PER_USER },
+      (_, d) => new Device(`${u.username}#${d}`, u.id, u.cookie, chatsOf.get(u.id)!)
+    )
   )
   devices.forEach((d) => d.connect())
   await sleep(1000)
@@ -227,12 +288,11 @@ async function main() {
     pick(devices).kill()
     kills++
   }, KILL_EVERY_MS)
-  const total = MESSAGES_PER_DEVICE * devices.length
   let redeployed = false
   await Promise.all(
     devices.map(async (d) => {
       for (let i = 0; i < MESSAGES_PER_DEVICE; i++) {
-        d.send(pick(d.chats), `${d.name} ${i}`)
+        d.act(pick(d.chats), `${d.name} ${i}`)
         if (REDEPLOY && !redeployed && d === devices[0] && i === MESSAGES_PER_DEVICE / 2) {
           redeployed = true
           redeploy()
@@ -277,7 +337,9 @@ async function main() {
   }
   for (const d of devices) {
     failures.push(...d.conflicts.map((c) => `${d.name}: ${c}`))
-    if (d.outbox.size) failures.push(`${d.name}: ${d.outbox.size} messages never acked`)
+    if (d.outbox.size) failures.push(`${d.name}: ${d.outbox.size} frames never acked`)
+    for (const cid of d.patches)
+      if (!stored.has(cid) && !d.refused.has(cid)) failures.push(`${d.name}: change ${cid} lost`)
     // Exactly once, and in the order this device wrote them.
     const lastSeq = new Map<string, number>()
     for (const { chat, cid } of d.written) {
@@ -293,26 +355,26 @@ async function main() {
     for (const chat of d.chats) {
       const mine = [...d.log.get(chat)!.values()].sort((a, b) => a.seq - b.seq)
       const theirs = server.get(chat)!
-      const same =
-        mine.length === theirs.length &&
-        mine.every((m, i) => m.seq === theirs[i].seq && m.cid === theirs[i].cid && m.body === theirs[i].body)
-      if (!same) failures.push(`${d.name}: copy of ${chat} differs (${mine.length} vs ${theirs.length} messages)`)
+      const same = mine.length === theirs.length && mine.every((m, i) => state(m) === state(theirs[i]))
+      if (!same) failures.push(`${d.name}: copy of ${chat} differs (${mine.length} vs ${theirs.length} entries)`)
     }
   }
 
   const connects = devices.reduce((n, d) => n + d.connects, 0)
   const errors = devices.flatMap((d) => d.errors)
+  const sends = devices.reduce((n, d) => n + d.written.length, 0)
+  const changes = devices.reduce((n, d) => n + d.patches.length - d.refused.size, 0)
   const drops = devices.reduce((n, d) => n + d.drops, 0)
   console.log(
-    `${stored.size}/${total} messages stored, ${kills} sockets killed, ${drops} dropped by the server, ${connects} connects` +
+    `${stored.size}/${sends + changes} entries stored (${sends} messages, ${changes} changes), ${kills} sockets killed, ${drops} dropped by the server, ${connects} connects` +
       (redeployed ? ', 2 redeploys' : '') +
-      (errors.length ? `, ${errors.length} send errors (${[...new Set(errors)].join('; ')})` : '')
+      (errors.length ? `, ${errors.length} refused (${[...new Set(errors)].join('; ')})` : '')
   )
   if (failures.length) {
     console.error(`FAIL: ${failures.length} problems\n` + failures.slice(0, 30).join('\n'))
     process.exit(1)
   }
-  console.log('PASS: every message stored exactly once, in order, and every client matches the server')
+  console.log('PASS: every message and change stored exactly once, in order, and every client matches the server')
   process.exit(0)
 }
 

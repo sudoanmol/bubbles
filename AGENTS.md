@@ -126,17 +126,17 @@ client                          UserDO                    ChatDO
 - **Idempotent sends.** The client generates `cid` (a ULID) and writes the message to its outbox (IndexedDB) before sending. `UNIQUE(cid)` in ChatDO makes retries harmless. The outbox is replayed, in write order, on every connect, so it survives going offline and reloads. UserDO handles a socket's frames one at a time so a replayed burst keeps its order.
 - **Gap detection.** A chat's cursor is the end of the unbroken run of `seq`s the client holds. Syncing a chat is `GET /api/chats/:id/messages?after=<cursor>`; if the client is more than a page behind, the server returns the latest page instead and the client drops its older copy, so what it stores is always one unbroken run. A live message past a gap shows at once and triggers a sync of that chat if it's on screen. On reconnect the client refetches the inbox and syncs the chats on screen; other chats sync when opened.
 - **Deploys are routine.** A deploy drops sockets. The client reconnects, replays its outbox and fills any gaps.
-- **Edits and deletes** are new events with a new `seq` (deletes are tombstones), so the gap logic covers them too.
+- **Edits, deletes and reactions** are log entries too (`kind: 'patch'`) with their own `seq`, so gap repair covers them. ChatDO updates the message in place and appends a patch carrying the message's new state; every copy keeps whichever state has the higher `rev` (the seq of its last change), so patches apply idempotently and in any order. Deletes are tombstones. `applyPatch` in `protocol.ts` is the one rule for what a change does: the server stores with it, the client shows its own unsent changes with it. A refused message stays as "Not sent"; a refused change is dropped and the message reverts.
 - **Ephemeral events** (typing, presence) travel the same path but are never stored. Typing is throttled to one event every 3 seconds.
 - **Known limits:** each DO lives in one location (near where it was created). A single DO handles roughly 1k req/s. Fan-out happens on every send, so groups are capped at about 256 members. Mark these limits with `ponytail:` comments in the code.
 
 ### Data model
 
-- **Client (IndexedDB, one database per account, `bubbles-<uid>`):** `messages` (keyed `[chat, seq]`), `outbox` (by `cid`), `inbox`, `chats`. TanStack Query is the store the UI reads; every change is written through, and the cache is filled from here on start so the app renders before the network answers. The session is remembered in `localStorage` and revalidated in the background. Signing out deletes the database.
+- **Client (IndexedDB, one database per account, `bubbles-<uid>`):** `messages` (the log, keyed `[chat, seq]`, patches included), `outbox` (unacked frames, by `cid`), `inbox`, `chats`. TanStack Query is the store the UI reads; every change is written through, and the cache is filled from here on start so the app renders before the network answers. The session is remembered in `localStorage` and revalidated in the background. Signing out deletes the database.
 
 - **D1:** Better Auth's `user` (plus `username` and `displayUsername`), `session`, `account`, `verification`.
-- **UserDO SQLite:** `inbox(chat_id, last_seq, read_seq, unread, preview, updated_at)`, `push_sub(endpoint, keys)`.
-- **ChatDO SQLite:** `member(user_id, role, read_seq)`, `message(seq PK, cid UNIQUE, sender, body, reply_to, attachments, edited_at, deleted_at, ts)`, `reaction(seq, user_id, emoji)`, `message_fts` (FTS5).
+- **UserDO SQLite:** `chat(chat_id, peer_id, last_seq, preview JSON, updated_at)` (the inbox; read state and unread counts come with read receipts), `push_sub(endpoint, keys)`.
+- **ChatDO SQLite:** `member(user_id, role, read_seq)`, `event(seq PK, cid UNIQUE, sender, ts, kind, body, reply JSON, target, edited, deleted, reactions JSON, rev)` (the log: messages hold their current state; one reaction per person), `message_fts` (FTS5). A schema change drops and recreates tables (`DROP TABLE IF EXISTS` of the old name) rather than migrating, until there is data worth keeping.
 
 ## Build phases
 
@@ -153,14 +153,14 @@ Each phase lists what to build and when it counts as done.
 
 ## Performance budget
 
-| Metric                                    | Target             | How it's measured                                                                                                                                                                        |
-| ----------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 153 KB after phase 2 with React Compiler; React (71) + TanStack Router (30) are the floor |
-| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                                    |
-| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                                                |
-| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                                                 |
-| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                                         |
-| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                                            |
+| Metric                                    | Target             | How it's measured                                                                                                                                                                    |
+| ----------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 155 KB after phase 3 message actions; React (71) + TanStack Router (30) are the floor |
+| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                                |
+| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                                            |
+| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                                             |
+| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                                     |
+| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                                        |
 
 ## Differentiators (each needs proof, not just a claim)
 

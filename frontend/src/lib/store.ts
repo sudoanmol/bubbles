@@ -1,7 +1,7 @@
 import type { Chat, InboxItem, Message } from 'backend/protocol'
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb'
 
-import type { LocalMessage } from './api'
+import type { Pending } from './api'
 
 // The device's copy of the user's data in IndexedDB. TanStack Query stays the store the UI reads; everything that
 // changes it is written through to here, and the app reads it back on start so it renders before the network answers.
@@ -9,8 +9,8 @@ import type { LocalMessage } from './api'
 interface Schema extends DBSchema {
   /** Messages the server has stored, keyed by chat and `seq`. */
   messages: { key: [string, number]; value: Message }
-  /** Messages written on this device that the server has not acked yet. Replayed on every connect. */
-  outbox: { key: string; value: LocalMessage }
+  /** Frames written on this device that the server has not acked yet. Replayed on every connect. */
+  outbox: { key: string; value: Pending }
   inbox: { key: string; value: InboxItem }
   chats: { key: string; value: Chat }
 }
@@ -22,8 +22,10 @@ export function openStore(uid: string) {
   if (current?.uid === uid) return
   current = {
     uid,
-    db: openDB<Schema>(`bubbles-${uid}`, 1, {
+    // A new version starts the local copy over; it is only a cache of the server.
+    db: openDB<Schema>(`bubbles-${uid}`, 2, {
       upgrade(db) {
+        for (const name of db.objectStoreNames) db.deleteObjectStore(name)
         db.createObjectStore('messages', { keyPath: ['chat', 'seq'] })
         db.createObjectStore('outbox', { keyPath: 'cid' })
         db.createObjectStore('inbox', { keyPath: 'chatId' })
@@ -32,6 +34,8 @@ export function openStore(uid: string) {
     }),
   }
 }
+
+export const currentUid = () => current!.uid
 
 /** Removes everything this device holds for the user (on sign out). */
 export async function deleteStore() {
@@ -66,55 +70,59 @@ async function acked(db: IDBPDatabase<Schema>, chat: string, limit: number, befo
   return out.reverse()
 }
 
-/** The newest messages held for a chat, plus its unsent ones, in display order. */
+/** The newest log entries held for a chat, and its unsent frames. */
 export const cachedMessages = (chat: string, limit: number) =>
-  use<LocalMessage[]>([], async (db) => {
-    const outbox = (await db.getAll('outbox')).filter((m) => m.chat === chat).sort((a, b) => (a.cid < b.cid ? -1 : 1))
-    return [...(await acked(db, chat, limit)), ...outbox]
-  })
+  use<[Message[], Pending[]]>([[], []], async (db) => [
+    await acked(db, chat, limit),
+    (await db.getAll('outbox')).filter((p) => p.chat === chat).sort((a, b) => (a.cid < b.cid ? -1 : 1)),
+  ])
+
+export const cachedMessage = (chat: string, seq: number) => use(undefined, (db) => db.get('messages', [chat, seq]))
 
 /** A page of history before `before` from the local copy, so scrolling back works offline. */
 export const cachedOlder = (chat: string, before: number, limit: number) =>
   use<Message[]>([], (db) => acked(db, chat, limit, before))
 
 /**
- * Stores messages the server sent and clears them from the outbox. `dropBefore` deletes the chat's older copy when
- * gap repair had to jump to the latest page, so what's stored stays one unbroken run.
+ * Stores log entries the server sent and clears them from the outbox. A patch also updates the message it changed,
+ * if that is held. `dropBefore` deletes the chat's older copy when gap repair had to jump to the latest page, so
+ * what's stored stays one unbroken run.
  */
 export const saveMessages = (chat: string, messages: Message[], dropBefore?: number) =>
   use(undefined, async (db) => {
     const tx = db.transaction(['messages', 'outbox'], 'readwrite')
     const store = tx.objectStore('messages')
+    const patch = async (p: Message) => {
+      const target = await store.get([chat, p.target!])
+      if (target && p.seq > target.rev) {
+        const { body, reply, edited, deleted, reactions } = p
+        await store.put({ ...target, body, reply, edited, deleted, reactions, rev: p.seq })
+      }
+    }
     await Promise.all([
       dropBefore !== undefined && store.delete(chatRange(chat, dropBefore)),
-      ...messages.flatMap((m) => [store.put(m), tx.objectStore('outbox').delete(m.cid)]),
+      ...messages.flatMap((m) => [
+        store.put(m),
+        tx.objectStore('outbox').delete(m.cid),
+        m.kind === 'patch' && patch(m),
+      ]),
       tx.done,
     ])
   })
 
 export const allOutbox = () =>
-  use<LocalMessage[]>([], async (db) => (await db.getAll('outbox')).sort((a, b) => (a.cid < b.cid ? -1 : 1)))
+  use<Pending[]>([], async (db) => (await db.getAll('outbox')).sort((a, b) => (a.cid < b.cid ? -1 : 1)))
 
 export const deleteOutbox = (cid: string) => use(undefined, (db) => db.delete('outbox', cid))
 
-export const saveOutbox = (message: LocalMessage) => use(undefined, (db) => db.put('outbox', message).then(() => {}))
+export const saveOutbox = (pending: Pending) => use(undefined, (db) => db.put('outbox', pending).then(() => {}))
 
-/** The server stored an outbox message: move it to `messages` with its `seq`. */
-export const ackOutbox = (cid: string, seq: number, ts: number) =>
-  use(undefined, async (db) => {
-    const tx = db.transaction(['messages', 'outbox'], 'readwrite')
-    const pending = await tx.objectStore('outbox').get(cid)
-    if (pending) {
-      const { failed: _, ...message } = pending
-      await Promise.all([tx.objectStore('messages').put({ ...message, seq, ts }), tx.objectStore('outbox').delete(cid)])
-    }
-    await tx.done
-  })
-
+/** Marks an unsent frame as refused by the server, and returns it. */
 export const failOutbox = (cid: string) =>
   use(undefined, async (db) => {
     const pending = await db.get('outbox', cid)
     if (pending) await db.put('outbox', { ...pending, failed: true })
+    return pending
   })
 
 export const cachedInbox = () =>
