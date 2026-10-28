@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers'
 import * as v from 'valibot'
 
 import { ClientFrame, nextPreview, type Message, type Preview, type ServerFrame } from '../protocol'
+import { migrate } from './schema'
 
 export type InboxRow = {
   chat_id: string
@@ -18,13 +19,14 @@ export class UserDO extends DurableObject<CloudflareBindings> {
 
   constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env)
-    this.sql.exec(`
-      DROP TABLE IF EXISTS inbox;
-      CREATE TABLE IF NOT EXISTS chat (
-        chat_id TEXT PRIMARY KEY, peer_id TEXT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0, preview TEXT,
-        updated_at INTEGER NOT NULL
-      );
-    `)
+    migrate(ctx.storage, [
+      // The phase 1 `inbox` table was replaced by `chat`, not migrated.
+      `DROP TABLE IF EXISTS inbox;
+       CREATE TABLE IF NOT EXISTS chat (
+         chat_id TEXT PRIMARY KEY, peer_id TEXT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0, preview TEXT,
+         updated_at INTEGER NOT NULL
+       );`,
+    ])
   }
 
   get uid() {

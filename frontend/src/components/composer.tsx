@@ -134,12 +134,14 @@ export function Composer({
         </div>
       )}
       <div className="flex items-end gap-3">
-        {/* ponytail: no upload yet; images arrive in phase 4 (direct-to-R2 uploads). */}
+        {/* ponytail: no upload yet, so it shows as off (Paper: "Offline & delivery"); images arrive in phase 4
+            (direct-to-R2 uploads), which brings back its sticker look. */}
         <button
           type="button"
-          aria-label="Add image"
+          aria-label="Add image (coming soon)"
+          title="Images are coming soon"
           disabled
-          className="relative -top-1 flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-paper shadow-[2px_2px_0_var(--color-ink)] transition-[translate,box-shadow,background-color] duration-100 hover:bg-sun active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
+          className="relative -top-1 flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-[#cfcfcf] text-[#b5b5b5]"
         >
           <PlusIcon className="size-5" strokeWidth={2.75} />
         </button>

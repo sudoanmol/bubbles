@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 
 import { applyPatch, type ClientFrame, type Message } from '../protocol'
+import { migrate } from './schema'
 
 const PAGE = 50
 /** How long until fan-out is tried again after this object stopped partway, or after a first failure. */
@@ -21,18 +22,18 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
 
   constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env)
-    // The phase 1 `message` table is dropped, not migrated: there is no data worth keeping yet.
-    this.sql.exec(`
-      DROP TABLE IF EXISTS message;
-      CREATE TABLE IF NOT EXISTS member (user_id TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'member', read_seq INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS event (
-        seq INTEGER PRIMARY KEY, cid TEXT NOT NULL UNIQUE, sender TEXT NOT NULL, ts INTEGER NOT NULL,
-        kind TEXT NOT NULL, body TEXT NOT NULL, reply TEXT, target INTEGER, edited INTEGER,
-        deleted INTEGER NOT NULL DEFAULT 0, reactions TEXT NOT NULL DEFAULT '{}', rev INTEGER NOT NULL
-      );
-      -- The last seq each member's UserDO has stored. Fan-out sends everything after it, so it survives failures.
-      CREATE TABLE IF NOT EXISTS delivery (user_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);
-    `)
+    migrate(ctx.storage, [
+      // The phase 1 `message` table was replaced by the log, not migrated.
+      `DROP TABLE IF EXISTS message;
+       CREATE TABLE IF NOT EXISTS member (user_id TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'member', read_seq INTEGER NOT NULL DEFAULT 0);
+       CREATE TABLE IF NOT EXISTS event (
+         seq INTEGER PRIMARY KEY, cid TEXT NOT NULL UNIQUE, sender TEXT NOT NULL, ts INTEGER NOT NULL,
+         kind TEXT NOT NULL, body TEXT NOT NULL, reply TEXT, target INTEGER, edited INTEGER,
+         deleted INTEGER NOT NULL DEFAULT 0, reactions TEXT NOT NULL DEFAULT '{}', rev INTEGER NOT NULL
+       );
+       -- The last seq each member's UserDO has stored. Fan-out sends everything after it, so it survives failures.
+       CREATE TABLE IF NOT EXISTS delivery (user_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);`,
+    ])
   }
 
   get id() {

@@ -1,5 +1,6 @@
 import type { Chat, InboxItem, Message } from 'backend/protocol'
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { useSyncExternalStore } from 'react'
 
 import type { Pending } from './log'
 
@@ -59,15 +60,38 @@ export async function deleteStore() {
   await deleteDB(`bubbles-${uid}`)
 }
 
-/** Runs against the database; the app keeps working (without a local copy) if IndexedDB is unavailable. */
+/**
+ * Runs against the database; the app keeps working (without a local copy) if IndexedDB is unavailable, and says so
+ * (useStorageFailed), since unsent messages then live only in this tab.
+ */
 async function use<T>(fallback: T, fn: (db: IDBPDatabase<Schema>) => Promise<T>) {
+  const account = current
   try {
-    if (!current) return fallback
-    return await fn(await current.db)
+    if (!account) return fallback
+    return await fn(await account.db)
   } catch (error) {
     console.error('Local store:', error)
+    // A database closed by sign-out or another tab isn't a broken browser.
+    if (current === account && !failed) {
+      failed = true
+      listeners.forEach((l) => l())
+    }
     return fallback
   }
+}
+
+let failed = false
+const listeners = new Set<() => void>()
+
+/** True once this browser failed to read or write the local copy (private mode, storage full, blocked). */
+export function useStorageFailed() {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l)
+      return () => listeners.delete(l)
+    },
+    () => failed
+  )
 }
 
 const chatRange = (chat: string, before = Infinity) => IDBKeyRange.bound([chat, -Infinity], [chat, before], false, true)

@@ -143,7 +143,7 @@ client                          UserDO                    ChatDO
 
 - **D1:** Better Auth's `user` (plus `username` and `displayUsername`), `session`, `account`, `verification`.
 - **UserDO SQLite:** `chat(chat_id, peer_id, last_seq, preview JSON with its rev, updated_at)` (the inbox; read state and unread counts come with read receipts), `push_sub(endpoint, keys)`.
-- **ChatDO SQLite:** `member(user_id, role, read_seq)`, `delivery(user_id, seq)` (fan-out progress), `event(seq PK, cid UNIQUE, sender, ts, kind, body, reply JSON, target, edited, deleted, reactions JSON, rev)` (the log: messages hold their current state; one reaction per person), `message_fts` (FTS5). A schema change drops and recreates tables (`DROP TABLE IF EXISTS` of the old name) rather than migrating, until there is data worth keeping.
+- **ChatDO SQLite:** `member(user_id, role, read_seq)`, `delivery(user_id, seq)` (fan-out progress), `event(seq PK, cid UNIQUE, sender, ts, kind, body, reply JSON, target, edited, deleted, reactions JSON, rev)` (the log: messages hold their current state; one reaction per person), `message_fts` (FTS5). Durable Object schemas change through `migrate()` in `durable-objects/schema.ts`: an append-only list of SQL migrations, each run once per object in a transaction. Never edit or remove a shipped migration, and never drop a table that holds user data.
 
 ## Build phases
 

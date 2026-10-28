@@ -4,7 +4,7 @@ import type { Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon, BanIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 
 import { Avatar } from '@/components/avatar'
 import { Composer, type ComposerMode } from '@/components/composer'
@@ -301,8 +301,11 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] })
     },
   })
 
+  // Coming back online tries again by itself; while online, failing stays failed until Retry, rather than looping.
+  const was = useRef(connection)
   useEffect(() => {
-    if (connection === 'online' && load.isError) load.reset()
+    if (was.current !== 'online' && connection === 'online' && load.isError) load.reset()
+    was.current = connection
   }, [connection, load])
 
   // Loads when this line at the top of the list is actually on screen, not merely before the scroller has measured.
@@ -319,9 +322,27 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] })
   }, [onScreen, hasOlder, oldest, load])
 
   if (!hasOlder) return null
+  // Paper: "Offline & delivery". Retry clears the error; the sentinel is still on screen, so the effect loads again.
   return (
-    <p ref={sentinel} className="py-2 text-center text-xs text-muted-foreground">
-      {load.isError ? 'Could not load older messages' : 'Loading…'}
-    </p>
+    <div
+      ref={sentinel}
+      className="flex items-center justify-center gap-2.5 py-2 text-xs font-medium text-muted-foreground"
+    >
+      {load.isError ? (
+        <>
+          Couldn't load older messages
+          <button
+            type="button"
+            onClick={() => load.reset()}
+            className="flex items-center gap-1 rounded-full border-[1.5px] border-ink bg-paper px-2.5 py-[3px] font-semibold text-ink transition-colors hover:bg-sun"
+          >
+            <RotateCcwIcon className="size-3" strokeWidth={2.75} aria-hidden="true" />
+            Retry
+          </button>
+        </>
+      ) : (
+        'Loading…'
+      )}
+    </div>
   )
 }

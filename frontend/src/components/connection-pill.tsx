@@ -1,11 +1,25 @@
 import { cn } from 'cn'
-import { WifiOffIcon } from 'lucide-react'
+import { CircleAlertIcon, WifiOffIcon } from 'lucide-react'
 
 import { useConnection } from '@/lib/socket'
+import { useStorageFailed } from '@/lib/store'
 
-/** Sits above the composer while the socket is down (Paper: "Offline & delivery"). */
+/** Sits above the composer while the socket is down or this browser can't save (Paper: "Offline & delivery"). */
 export function ConnectionPill() {
   const connection = useConnection()
+  const storageFailed = useStorageFailed()
+  // The connection comes first: offline or reconnecting is what explains a message not going out right now.
+  if (connection === 'online' && storageFailed)
+    return (
+      <div className="pointer-events-none absolute inset-x-0 -top-3 flex -translate-y-full justify-center px-4">
+        <output className="flex animate-in items-center gap-2 rounded-full border-2 border-ink bg-paper py-[7px] pr-4 pl-3 shadow-[2px_2px_0_var(--color-ink)] duration-200 fade-in slide-in-from-bottom-2">
+          <CircleAlertIcon className="size-4 shrink-0 text-danger" strokeWidth={2.5} aria-hidden="true" />
+          <span className="text-sm leading-[18px] font-semibold">
+            This browser can't save messages. Keep the tab open until they send.
+          </span>
+        </output>
+      </div>
+    )
   if (connection === 'online') return null
   const offline = connection === 'offline'
   return (
