@@ -58,12 +58,18 @@ export type ClientFrame = v.InferOutput<typeof ClientFrame>
 export type Patch = Extract<ClientFrame, { t: 'edit' | 'delete' | 'react' }>
 export type Write = Exclude<ClientFrame, { t: 'read' }>
 
+/** How long after sending a message you can still edit it, as in iMessage and WhatsApp. Deleting has no limit. */
+export const EDIT_WINDOW_MS = 15 * 60_000
+
+export const canEdit = (m: { sender: string; ts: number; deleted: boolean }, uid: string, now: number) =>
+  m.sender === uid && !m.deleted && now - m.ts <= EDIT_WINDOW_MS
+
 /**
  * A message's state after a patch by `uid` at `ts`, or an error message if the patch is not allowed. The server
  * applies it to store the change; the client applies it to show its own change before the server acks it.
  */
 export function applyPatch(
-  m: MessageState & { sender: string },
+  m: MessageState & { sender: string; ts: number },
   p: Patch,
   uid: string,
   ts: number
@@ -75,7 +81,8 @@ export function applyPatch(
     return { ...state, reactions: p.emoji ? { ...others, [uid]: p.emoji } : others }
   }
   if (m.sender !== uid) return 'You can only change your own messages'
-  if (p.t === 'edit') return { ...state, body: p.body, edited: ts }
+  if (p.t === 'edit')
+    return canEdit(m, uid, ts) ? { ...state, body: p.body, edited: ts } : 'Messages can only be edited for 15 minutes'
   return { ...state, body: '', reply: null, deleted: true, reactions: {} }
 }
 

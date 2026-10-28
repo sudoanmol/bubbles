@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { MAX_BODY } from 'backend/protocol'
+import { canEdit, MAX_BODY } from 'backend/protocol'
 import { cn } from 'cn'
 import { ArrowUpIcon, PencilIcon, PlusIcon, ReplyIcon, SmileIcon, XIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
@@ -168,7 +168,7 @@ export function Composer({
                   queryClient.getQueryData(outboxQuery.queryKey) ?? [],
                   uid
                 ).findLast((m) => m.sender === uid && m.seq !== null && !m.deleted)
-                if (last) {
+                if (last && canEdit(last, uid, Date.now())) {
                   e.preventDefault()
                   onMode({ t: 'edit', message: last })
                 }

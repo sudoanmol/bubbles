@@ -3,7 +3,15 @@
 
 import assert from 'node:assert/strict'
 
-import { nextPreview, nextRead, type Message, type ReadState, type Text } from '../backend/src/protocol.ts'
+import {
+  applyPatch,
+  EDIT_WINDOW_MS,
+  nextPreview,
+  nextRead,
+  type Message,
+  type ReadState,
+  type Text,
+} from '../backend/src/protocol.ts'
 import { cursor, merge, withPending, type Pending } from '../frontend/src/lib/log.ts'
 
 const chat = 'c'
@@ -87,7 +95,8 @@ const outbox: Pending[] = [
   },
 ]
 const confirmed = merge(
-  [text(1), text(4)],
+  // Message 4 was just sent, so it is still inside the edit window.
+  [text(1), text(4, { ts: Date.now() })],
   [patch(5, 1, { reactions: { b: '🔥' } }), patch(6, 4, { body: 'first', edited: 6 })]
 )
 const shown = withPending(chat, confirmed, outbox, uid)
@@ -114,5 +123,11 @@ assert.deepEqual(readAfter([...fromB, ...fromB, patch(3, 1, { body: 'x' })]), { 
 assert.deepEqual(readAfter([...fromB, text(3), fromB[0]]), { lastSeq: 3, readSeq: 3, unread: 0 })
 // Read up to 1 already (a receipt beat the delivery): only 2 is unread.
 assert.equal(readAfter(fromB, { lastSeq: 0, readSeq: 1, unread: 0 }).unread, 1)
+
+// Edits close 15 minutes after sending; deletes and reactions don't.
+const edit = { t: 'edit', cid: 'e', chat, seq: 1, body: 'late' } as const
+assert.equal(typeof applyPatch(text(1), edit, 'a', 1 + EDIT_WINDOW_MS), 'object')
+assert.equal(typeof applyPatch(text(1), edit, 'a', 2 + EDIT_WINDOW_MS), 'string')
+assert.equal(typeof applyPatch(text(1), { ...edit, t: 'delete' }, 'a', 2 + EDIT_WINDOW_MS), 'object')
 
 console.log('PASS: log rules')

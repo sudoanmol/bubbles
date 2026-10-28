@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import type { Read, Message as Stored } from 'backend/protocol'
+import { canEdit, type Read, type Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon, BanIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
@@ -96,6 +96,13 @@ function MessageList({
   const messages = withPending(chatId, log, outbox, uid)
   const lastMine = messages.findLast((m) => m.sender === uid && !m.deleted)
   const { scrollToMessage } = useMessageScroller()
+
+  // The clock the edit window is checked against; Edit disappears within half a minute of the window closing.
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
 
   // An open chat in a visible tab is read up to its newest entry; sent again on reconnect (the socket forgets it).
   const visible = useSyncExternalStore(onVisibility, () => document.visibilityState === 'visible')
@@ -200,6 +207,7 @@ function MessageList({
                                     message={m}
                                     mine={mine}
                                     uid={uid}
+                                    editable={canEdit(m, uid, now)}
                                     onReact={react}
                                     onReply={() => onMode({ t: 'reply', message: m })}
                                     onEdit={() => onMode({ t: 'edit', message: m })}

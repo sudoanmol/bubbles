@@ -18,6 +18,7 @@ export function MessageActions({
   message,
   mine,
   uid,
+  editable,
   onReact,
   onReply,
   onEdit,
@@ -26,6 +27,8 @@ export function MessageActions({
   message: LocalMessage
   mine: boolean
   uid: string
+  /** Yours and still inside the edit window. */
+  editable: boolean
   onReact: (emoji: string | null) => void
   onReply: () => void
   onEdit: () => void
@@ -80,9 +83,11 @@ export function MessageActions({
           </button>
           {mine && (
             <>
-              <button type="button" aria-label="Edit" onClick={onEdit} className={action}>
-                <PencilIcon className="size-[17px]" strokeWidth={2.25} />
-              </button>
+              {editable && (
+                <button type="button" aria-label="Edit" onClick={onEdit} className={action}>
+                  <PencilIcon className="size-[17px]" strokeWidth={2.25} />
+                </button>
+              )}
               <button type="button" aria-label="Delete" onClick={onDelete} className={cn(action, 'text-danger')}>
                 <Trash2Icon className="size-[17px]" strokeWidth={2.25} />
               </button>
