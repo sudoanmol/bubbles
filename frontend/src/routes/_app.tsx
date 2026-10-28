@@ -2,7 +2,7 @@ import { createFileRoute, Outlet, redirect, useMatch } from '@tanstack/react-rou
 import { useEffect } from 'react'
 
 import { Sidebar } from '@/components/sidebar'
-import { sessionQuery } from '@/lib/auth'
+import { sessionQuery } from '@/lib/session'
 import { connect } from '@/lib/socket'
 
 /** Signed-in shell: the inbox beside the open chat, and the device's one socket. */

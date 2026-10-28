@@ -1,20 +1,8 @@
-import { queryOptions } from '@tanstack/react-query'
 import { usernameClient } from 'better-auth/client/plugins'
 import { createAuthClient } from 'better-auth/react'
 
+// Loaded only by the /login pages; signed-in pages use lib/session.
 export const authClient = createAuthClient({ plugins: [usernameClient()] })
-
-export type Session = typeof authClient.$Infer.Session
-
-export const sessionQuery = queryOptions({
-  queryKey: ['session'],
-  queryFn: async () => {
-    const { data, error } = await authClient.getSession()
-    if (error) throw error
-    return data
-  },
-  staleTime: 60_000,
-})
 
 // Better Auth returns `{ data, error }`; mutations need a thrown error.
 export async function unwrap<T>(result: Promise<{ data: T; error: { message?: string } | null }>) {

@@ -7,7 +7,7 @@ import { Avatar } from '@/components/avatar'
 import { Logo } from '@/components/logo'
 import { NewChat } from '@/components/new-chat'
 import { inboxQuery } from '@/lib/api'
-import { authClient, sessionQuery, unwrap, type Session } from '@/lib/auth'
+import { sessionQuery, signOut as requestSignOut, type Session } from '@/lib/session'
 import { formatShort } from '@/lib/time'
 
 export function Sidebar({ user, className }: { user: Session['user']; className?: string }) {
@@ -17,7 +17,7 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
   const [search, setSearch] = useState('')
 
   const signOut = useMutation({
-    mutationFn: () => unwrap(authClient.signOut()),
+    mutationFn: requestSignOut,
     onSuccess: async () => {
       queryClient.clear()
       queryClient.setQueryData(sessionQuery.queryKey, null)

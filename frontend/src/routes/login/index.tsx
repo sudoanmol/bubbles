@@ -4,7 +4,8 @@ import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-ro
 import { AuthHeading, AuthLayout, FormError } from '@/components/auth-layout'
 import { TextField } from '@/components/text-field'
 import { Button } from '@/components/ui/button'
-import { authClient, sessionQuery, unwrap } from '@/lib/auth'
+import { authClient, unwrap } from '@/lib/auth'
+import { sessionQuery } from '@/lib/session'
 
 type Mode = 'signin' | 'signup'
 

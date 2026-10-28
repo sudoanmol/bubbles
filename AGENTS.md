@@ -1,6 +1,6 @@
 # Bubbles
 
-A real-time chat app built entirely on Cloudflare. The goal is a production-grade chat app that is measurably fast: one actor per chat, one actor per user, one WebSocket per device, a local-first client, and published latency numbers.
+A real-time chat app built entirely on Cloudflare. The goal is a very light, very fast chat app that just works, and proves it with published numbers rather than a long feature list: one actor per chat, one actor per user, one WebSocket per device, a local-first client, a small bundle. Every feature must earn its bytes; prefer what the browser already ships (WebRTC, MediaRecorder, IndexedDB) over libraries.
 
 Build it in layers. Every phase below ends with something that works end to end and can be deployed. Do not start a phase until the previous one works in production.
 
@@ -14,7 +14,9 @@ backend/    Worker `bubbles-api` (private): Hono, auth, API, Durable Objects
   src/routes/             one Hono router per resource (ws, inbox, dms, chats, users)
   src/durable-objects/    UserDO (user.ts), ChatDO (chat.ts)
   src/protocol.ts         wire protocol shared with the frontend (`import … from 'backend/protocol'`)
-frontend/   Worker `bubbles` (public): TanStack Start, React 19, Tailwind v4, TanStack Query, shadcn (Base UI)
+frontend/   Worker `bubbles` (public): single-page app on TanStack Router, React 19, Tailwind v4, TanStack Query, shadcn (Base UI)
+  src/main.tsx            client entry (router + query client)
+  src/worker.ts           the Worker: static assets first, then /api/* → `API` service binding
   src/routes/_app*        signed-in shell (inbox + open chat); `/`, `/c/$chatId`, `/@{$username}`
   src/hooks/              shared React hooks
   src/lib/                api + query cache helpers, socket client, auth, time formatting
@@ -49,7 +51,7 @@ Assume the dev server is already running. Verify work with `pnpm typecheck` and 
 Browser (IndexedDB cache, outbox, seq cursors, 1 WebSocket)
    │ one public origin: bubbles.sudoanmol.workers.dev
    ▼
-bubbles (frontend Worker) ── TanStack Start, static assets; /api/* → service binding `API`
+bubbles (frontend Worker) ── static SPA assets; /api/* → service binding `API`
    ▼
 bubbles-api (backend Worker, no public URL) ── auth (Better Auth + D1), routing
    │ WebSocket (hibernating)
@@ -65,15 +67,15 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 - **ChatDO is the single source of truth for a chat.** A Durable Object handles one request at a time, so every chat gets a strict total order for free: a monotonic `seq` per chat, with no locks and no Redis.
 - **WebSocket Hibernation API** (`ctx.acceptWebSocket`). Idle sockets cost nothing.
 - **D1 holds only global data:** users, sessions, accounts, handles, user search. Chat data never goes into D1. It lives in each ChatDO's own durable SQLite database, which has 30-day point-in-time recovery. Cross-chat queries (global search, deleting a user's data) fan out over the user's inbox. Analytics comes from copying events to Analytics Engine or Queues, never from querying live chat databases.
-- **One origin, private API.** `frontend/src/server.ts` forwards `/api/*` to `bubbles-api` over the `API` service binding (no network hop). The API Worker has `workers_dev: false`, so it has no public URL. Cookie auth needs no CORS and no custom domain. The same path runs in dev: the Vite plugin reaches the local `wrangler dev` through the dev registry.
-- **SSR is off** (`defaultSsr: false` in `frontend/src/start.ts`). The app renders on the client from the local cache. The server renders only the HTML shell.
+- **One origin, private API.** `frontend/src/worker.ts` forwards `/api/*` to `bubbles-api` over the `API` service binding (no network hop). The API Worker has `workers_dev: false`, so it has no public URL. Cookie auth needs no CORS and no custom domain. The same path runs in dev: the Vite plugin reaches the local `wrangler dev` through the dev registry.
+- **A plain single-page app, no SSR.** Static assets are served before the Worker runs (`run_worker_first: ["/api/*"]`, `not_found_handling: "single-page-application"`), so the Worker only ever sees API calls. The app renders on the client from the local cache. We dropped TanStack Start: with no SSR and no server functions it only added ~10 KB of serializer.
 
 ### Stack
 
 | Layer                  | Choice                                                                                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------ |
-| Frontend               | TanStack Start + Router, React 19 + Compiler, Tailwind v4                                        |
-| Client data            | TanStack Query (all server state), Dexie for IndexedDB (phase 2)                                 |
+| Frontend               | TanStack Router (file routes, auto code splitting) as an SPA, React 19, Tailwind v4              |
+| Client data            | TanStack Query (the store the UI reads); `idb` writes it through to IndexedDB (phase 2)          |
 | UI kit                 | shadcn on Base UI (`Message`, `Bubble`, `MessageScroller`, `Dialog`), lucide icons               |
 | Socket client          | `partysocket` (reconnect with backoff)                                                           |
 | API                    | Hono, one router per resource in `backend/src/routes/`                                           |
@@ -138,35 +140,39 @@ Each phase lists what to build and when it counts as done.
 
 0. **Foundations.** pnpm workspace, root `.env`, oxlint/oxfmt + husky, Better Auth + D1 + Drizzle, the `/login`, `/login/username` and `/` routes, CI (typecheck + build + deploy). _Done when:_ you can sign up with email or Google in production, pick a username and land on `/`.
 1. **DMs end to end.** UserDO with a hibernating socket; ChatDO with `seq` and `cid` deduplication; RPC fan-out; inbox list; chat view with paginated history; sending. _Done when:_ two browsers can DM each other live in production.
-2. **Reliability and local-first (the main differentiator).** Dexie cache, outbox, per-chat cursors, gap repair, replay on reconnect; render from cache before the socket connects; optimistic sends with pending/sent/failed states. Chaos test: scripted clients plus forced disconnects plus a redeploy partway through, then assert that every client's log is identical. _Done when:_ the chaos test passes in CI, and turning on airplane mode, sending 5 messages and reconnecting delivers all 5 in order.
+2. **Reliability and local-first (the main differentiator).** IndexedDB cache (`idb`, not Dexie: Dexie costs 33 KB), outbox, per-chat cursors, gap repair, replay on reconnect; render from cache before the socket connects; optimistic sends with pending/sent/failed states. Chaos test: scripted clients plus forced disconnects plus a redeploy partway through, then assert that every client's log is identical. _Done when:_ the chaos test passes in CI, and turning on airplane mode, sending 5 messages and reconnecting delivers all 5 in order.
 3. **Groups and core features.** Create, rename, add or remove members, roles (removing a member cuts off delivery immediately); replies, edits, deletes, reactions; read receipts via `read_seq`, unread counts, typing, presence; rate limits on send, connect and auth. _Done when:_ v2 has every feature v1 had.
-4. **Media and links.** Direct-to-R2 uploads with presigned PUTs, thumbnails from Image Transformations, a link-preview unfurler with a cache. _Done when:_ images and link cards render instantly from cache when you scroll back.
+4. **Media, voice messages and links.** Direct-to-R2 uploads with presigned PUTs, thumbnails from Image Transformations, a link-preview unfurler with a cache. Voice messages: record with `MediaRecorder` in a format every browser can play, upload through the same R2 path, and store a waveform computed while recording so the chat draws it without decoding audio. _Done when:_ images, voice messages and link cards render instantly from cache when you scroll back.
 5. **Search and notifications.** FTS5 search per chat with jump-to-message; installable PWA; Web Push through Queues when a user has no live socket; per-chat mute. _Done when:_ a phone with the app closed gets a push notification, and search returns in under 50 ms.
 6. **Prove it.** Latency sampling into Analytics Engine; a public `/status` page with p50/p95/p99; a load-test harness with results committed; a cost model in the README. Optional: a Workers AI "catch me up" summary of unread messages. _Done when:_ the README opens with real numbers and a chart.
+7. **1:1 voice and video calls (stretch).** WebRTC between the two browsers, Cloudflare TURN for strict networks, and call signaling (ring, accept, decline, ICE) as ephemeral events over each user's existing UserDO socket. Ringing a closed app uses web push from phase 5. All call code is lazy-loaded. Group calls (Cloudflare Realtime SFU) come after. _Done when:_ two phones on different networks can call each other in production, and the call code adds 0 KB to the first load.
 
 ## Performance budget
 
-| Metric                                    | Target             | How it's measured                                                                                                                       |
-| ----------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| JS on the first load of a chat            | < 170 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. React + TanStack Router alone are ~85 KB |
-| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                   |
-| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                               |
-| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                |
-| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                        |
-| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                           |
+| Metric                                    | Target             | How it's measured                                                                                                                                                                    |
+| ----------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 147 KB after dropping TanStack Start; React (71) + TanStack Router (30) are the floor |
+| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                                |
+| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                                            |
+| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                                             |
+| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                                     |
+| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                                        |
 
 ## Differentiators (each needs proof, not just a claim)
 
 | Differentiator                          | Proof                                                                                      |
 | --------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Exactly-once, gap-free delivery         | Chaos test that kills sockets and redeploys mid-stream, then asserts identical client logs |
+| Works offline                           | Airplane mode, send 5 messages, reconnect: all 5 arrive in order                           |
+| Small                                   | First-load JS budget enforced in CI, with a size report on every change                    |
+| Read on one device, cleared everywhere  | Read state synced across a user's devices through their UserDO                             |
 | Instant cold open from the local cache  | Recorded numbers comparing v1 and v2                                                       |
 | Public live latency page                | `/status` with p50/p95/p99                                                                 |
 | Actor-per-chat with zero servers to run | README cost model: $ per 1M messages and idle cost                                         |
 | Per-chat FTS5 search                    | Search latency on a chat with 100k messages                                                |
 | Load tested                             | Chart of latency against concurrency, and the breaking point                               |
 
-Out of scope on purpose: end-to-end encryption (it would rule out server-side search and summaries) and an "AI chatbot in the chat."
+Out of scope on purpose: end-to-end encryption (it would rule out server-side search and summaries), an "AI chatbot in the chat", and feature-list padding (stories, stickers, channels) that adds weight without proving anything.
 
 ## UI
 

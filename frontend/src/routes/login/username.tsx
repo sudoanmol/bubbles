@@ -6,7 +6,8 @@ import { AuthHeading, AuthLayout, FormError } from '@/components/auth-layout'
 import { TextField } from '@/components/text-field'
 import { Button } from '@/components/ui/button'
 import { useDebounced } from '@/hooks/use-debounced'
-import { USERNAME_PATTERN, authClient, sessionQuery, suggestUsername, unwrap } from '@/lib/auth'
+import { USERNAME_PATTERN, authClient, suggestUsername, unwrap } from '@/lib/auth'
+import { sessionQuery } from '@/lib/session'
 
 export const Route = createFileRoute('/login/username')({
   beforeLoad: async ({ context }) => {
