@@ -36,12 +36,16 @@
     "valibot": "^1.5.0"
   },
   "devDependencies": {
+    "@babel/core": "^8.0.9",
     "@cloudflare/vite-plugin": "^1.65.0",
+    "@rolldown/plugin-babel": "^0.2.4",
     "@tanstack/router-plugin": "^1.168.48",
+    "@types/babel__core": "^7.20.5",
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "babel-plugin-react-compiler": "^1.0.0",
     "typescript": "^6.0.2",
     "vite": "^8.0.0",
     "wrangler": "^4.153.0"

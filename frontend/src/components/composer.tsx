@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { MAX_BODY } from 'backend/protocol'
 import { cn } from 'cn'
 import { ArrowUpIcon, PlusIcon, SmileIcon } from 'lucide-react'
-import { lazy, Suspense, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 
 import { sendMessage } from '@/lib/socket'
 
@@ -17,6 +17,11 @@ export function Composer({ chatId, uid, placeholder }: { chatId: string; uid: st
   const [emojiLoaded, setEmojiLoaded] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const emojiButton = useRef<HTMLButtonElement>(null)
+
+  // Ready to type when a chat opens. Not on touch screens, where focusing would pop the keyboard over the chat.
+  useEffect(() => {
+    if (matchMedia('(pointer: fine)').matches) input.current?.focus()
+  }, [])
 
   const send = () => {
     const text = body.trim()

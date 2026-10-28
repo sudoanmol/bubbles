@@ -10,6 +10,7 @@
 //                              The redeploy edits backend/src/index.ts and reverts it seconds later (and on exit).
 //   BASE=… REDEPLOY=0 pnpm chaos   another target, without the redeploy step
 
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 import { monotonicFactory } from 'ulid'
@@ -167,6 +168,32 @@ const entry = new URL('../backend/src/index.ts', import.meta.url)
 const original = readFileSync(entry, 'utf8')
 const revert = () => writeFileSync(entry, original)
 process.on('exit', revert)
+
+// The test's accounts (all on @chaos.test) leave the local database when it ends, pass or fail. Their sessions and
+// accounts go with them (ON DELETE CASCADE). ponytail: their chats' Durable Object storage stays in .wrangler/state.
+const local = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)
+process.on('exit', () => {
+  if (!local) return
+  try {
+    execFileSync(
+      'pnpm',
+      [
+        'exec',
+        'wrangler',
+        'd1',
+        'execute',
+        'DB',
+        '--local',
+        '--command',
+        "DELETE FROM user WHERE email GLOB '*@chaos.test'",
+      ],
+      { cwd: new URL('../backend', import.meta.url), stdio: 'ignore' }
+    )
+    console.log('removed the chaos users from the local database')
+  } catch {
+    console.error("could not remove the chaos users; run: DELETE FROM user WHERE email GLOB '*@chaos.test'")
+  }
+})
 process.on('SIGINT', () => process.exit(130))
 
 function redeploy() {

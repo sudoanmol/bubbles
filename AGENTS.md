@@ -74,19 +74,19 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 
 ### Stack
 
-| Layer                  | Choice                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| Frontend               | TanStack Router (file routes, auto code splitting) as an SPA, React 19, Tailwind v4              |
-| Client data            | TanStack Query (the store the UI reads); `idb` writes it through to IndexedDB (phase 2)          |
-| UI kit                 | shadcn on Base UI (`Message`, `Bubble`, `MessageScroller`, `Dialog`), lucide icons               |
-| Socket client          | `partysocket` (reconnect with backoff)                                                           |
-| API                    | Hono, one router per resource in `backend/src/routes/`                                           |
-| Protocol               | Valibot schemas and response types in `backend/src/protocol.ts`; frames are parsed on both sides |
-| Auth                   | Better Auth on D1 via the Drizzle adapter: email/password, username plugin, Google OAuth         |
-| Storage                | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2                        |
-| Async                  | Queues → Web Push (VAPID)                                                                        |
-| Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine                                            |
-| Tooling                | oxlint, oxfmt, husky + lint-staged                                                               |
+| Layer                  | Choice                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Frontend               | TanStack Router (file routes, auto code splitting) as an SPA, React 19 + React Compiler (Babel), Tailwind v4 |
+| Client data            | TanStack Query (the store the UI reads); `idb` writes it through to IndexedDB (phase 2)                      |
+| UI kit                 | shadcn on Base UI (`Message`, `Bubble`, `MessageScroller`, `Dialog`), lucide icons                           |
+| Socket client          | `partysocket` (reconnect with backoff)                                                                       |
+| API                    | Hono, one router per resource in `backend/src/routes/`                                                       |
+| Protocol               | Valibot schemas and response types in `backend/src/protocol.ts`; frames are parsed on both sides             |
+| Auth                   | Better Auth on D1 via the Drizzle adapter: email/password, username plugin, Google OAuth                     |
+| Storage                | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2                                    |
+| Async                  | Queues → Web Push (VAPID)                                                                                    |
+| Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine                                                        |
+| Tooling                | oxlint, oxfmt, husky + lint-staged                                                                           |
 
 ## Auth
 
@@ -153,14 +153,14 @@ Each phase lists what to build and when it counts as done.
 
 ## Performance budget
 
-| Metric                                    | Target             | How it's measured                                                                                                                                                    |
-| ----------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 149 KB after phase 2; React (71) + TanStack Router (30) are the floor |
-| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                |
-| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                            |
-| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                             |
-| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                     |
-| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                        |
+| Metric                                    | Target             | How it's measured                                                                                                                                                                        |
+| ----------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JS on the first load of a chat            | < 160 KB gzip      | Production build (`vite preview`), JS fetched when opening `/c/$chatId`, gzipped; check in CI. 153 KB after phase 2 with React Compiler; React (71) + TanStack Router (30) are the floor |
+| Time to first chat visible (warm cache)   | < 150 ms           | `performance.mark` → Analytics Engine                                                                                                                                                    |
+| Send → ack, p50 (same region)             | < 50 ms            | Client timing per message                                                                                                                                                                |
+| Send → peer receive, p99 (same continent) | < 150 ms           | Server timestamp vs. client receive time                                                                                                                                                 |
+| Messages lost or duplicated under chaos   | 0                  | Chaos test suite                                                                                                                                                                         |
+| Inbox load                                | 1 DO read, < 30 ms | Worker timing                                                                                                                                                                            |
 
 ## Differentiators (each needs proof, not just a claim)
 

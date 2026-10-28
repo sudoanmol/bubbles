@@ -4,7 +4,7 @@ import type { Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { ArrowLeftIcon } from 'lucide-react'
-import { Fragment, useEffect } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 
 import { Avatar } from '@/components/avatar'
 import { Composer } from '@/components/composer'
@@ -18,7 +18,6 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
-  useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller'
 import { api, chatQuery, hydrateChat, merge, messagesQuery, PAGE, type LocalMessage } from '@/lib/api'
 import { cachedOlder, saveMessages } from '@/lib/store'
@@ -53,7 +52,9 @@ function ChatView() {
           <span className="truncate text-[13px] leading-4 font-medium text-muted-foreground">@{peer.username}</span>
         </div>
       </header>
-      <MessageScrollerProvider defaultScrollPosition="end">
+      {/* autoScroll keeps the view pinned to the newest message while you are at the bottom, through layout
+          shifts (fonts, older pages, new messages); scrolling up releases it. */}
+      <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
         <MessageList chatId={chatId} uid={user.id} />
       </MessageScrollerProvider>
       <Composer chatId={chatId} uid={user.id} placeholder={`Message ${peer.name.split(' ')[0]}`} />
@@ -141,7 +142,6 @@ function Status({ message }: { message: LocalMessage }) {
 /** Loads the previous page when the user scrolls to the top: from the local copy if it has it, else the server. */
 function LoadOlder({ chatId, messages }: { chatId: string; messages: LocalMessage[] }) {
   const queryClient = useQueryClient()
-  const { start } = useMessageScrollerScrollable()
   const oldest = messages.find((m) => m.seq !== null)?.seq ?? undefined
   const hasOlder = oldest !== undefined && oldest > 1
 
@@ -159,14 +159,22 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: LocalMessag
     },
   })
 
-  const atTop = !start
+  // Loads when this line at the top of the list is actually on screen, not merely before the scroller has measured.
+  const [onScreen, setOnScreen] = useState(false)
+  const sentinel = useCallback((el: HTMLElement | null) => {
+    if (!el) return
+    const observer = new IntersectionObserver(([entry]) => setOnScreen(entry.isIntersecting))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   useEffect(() => {
-    if (atTop && hasOlder && load.isIdle) load.mutate(oldest)
-  }, [atTop, hasOlder, oldest, load])
+    if (onScreen && hasOlder && load.isIdle) load.mutate(oldest)
+  }, [onScreen, hasOlder, oldest, load])
 
   if (!hasOlder) return null
   return (
-    <p className="py-2 text-center text-xs text-muted-foreground">
+    <p ref={sentinel} className="py-2 text-center text-xs text-muted-foreground">
       {load.isError ? 'Could not load older messages' : 'Loading…'}
     </p>
   )
