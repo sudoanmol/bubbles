@@ -8,6 +8,7 @@ import {
   type Message,
   type Person,
   type Read,
+  type Refused,
   type Role,
   type ServerFrame,
   type System,
@@ -16,8 +17,10 @@ import {
 import { migrate } from './schema'
 
 const PAGE = 50
+
 /** How long until fan-out is tried again after this object stopped partway, or after a first failure. */
 const RETRY_MS = 5_000
+
 /** The longest wait between retries while a member stays unreachable. */
 const MAX_RETRY_MS = 5 * 60_000
 
@@ -28,7 +31,7 @@ type Row = Omit<Message, 'chat' | 'reply' | 'deleted' | 'reactions' | 'kind' | '
     reactions: string
   }
 
-export type MemberRow = {
+type MemberRow = {
   user_id: string
   role: Role
   read_seq: number
@@ -48,8 +51,6 @@ export type GroupOp =
   | { t: 'admin'; user: Person; admin: boolean }
   | { t: 'leave'; successor?: Person }
   | { t: 'delete' }
-
-type Refused = { refused: string }
 
 /** One per chat (DM or group): the single source of truth and total order for its log. */
 export class ChatDO extends DurableObject<CloudflareBindings> {
@@ -92,12 +93,14 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
   /** Every member, past ones included, or null if `uid` was never one. */
   members(uid: string) {
     const rows = this.sql.exec<MemberRow>('SELECT * FROM member ORDER BY joined, user_id').toArray()
+
     return rows.some((r) => r.user_id === uid) ? rows : null
   }
 
   /** The chat as `uid` may see it, or null if they were never in it. */
   info(uid: string) {
     const members = this.members(uid)
+
     return members && { group: this.group ?? null, members }
   }
 
@@ -133,13 +136,16 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
     if (!this.active(uid)) return { refused: 'Not a member of this chat' }
     // A retry of a stored frame: ack it again without a second fan-out.
     const [stored] = this.read('cid = ?', f.cid)
+
     if (stored) return stored
 
     const seq = this.nextSeq()
     const base = { chat: this.id, seq, cid: f.cid, sender: uid, ts: Date.now(), rev: seq }
     let msg: Message
+
     if (f.t === 'send') {
       const [quoted] = f.reply ? this.read("seq = ? AND kind = 'text' AND deleted = 0", f.reply) : []
+
       if (f.reply && !quoted) return { refused: 'That message is gone' }
       const reply = quoted ? { seq: quoted.seq, sender: quoted.sender, body: quoted.body.slice(0, 200) } : null
       msg = { ...base, kind: 'text', body: f.body, reply, target: null, edited: null, deleted: false, reactions: {} }
@@ -147,9 +153,11 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       this.sql.exec('UPDATE member SET read_seq = ?, read_ts = ? WHERE user_id = ?', seq, base.ts, uid)
     } else {
       const [target] = this.read("seq = ? AND kind = 'text'", f.seq)
+
       if (!target) return { refused: 'That message is gone' }
       const next = applyPatch(target, f, uid, base.ts)
-      if (typeof next === 'string') return { refused: next }
+
+      if ('refused' in next) return next
       this.sql.exec(
         'UPDATE event SET body = ?, reply = ?, edited = ?, deleted = ?, reactions = ?, rev = ? WHERE seq = ?',
         ...columns(next),
@@ -158,7 +166,9 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       )
       msg = { ...base, ...next, kind: 'patch', target: target.seq }
     }
+
     this.commit(msg)
+
     return msg
   }
 
@@ -187,6 +197,7 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
   /** Appends a group event by `uid`. */
   system(uid: string, e: GroupEvent): System {
     const seq = this.nextSeq()
+
     const msg: System = {
       chat: this.id,
       seq,
@@ -202,7 +213,9 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       deleted: false,
       reactions: {},
     }
+
     this.commit(msg)
+
     return msg
   }
 
@@ -210,6 +223,7 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
   create(uid: string, name: string, people: Person[]) {
     const now = Date.now()
     this.ctx.storage.kv.put('group', { name, deleted: false })
+
     for (const p of people)
       this.sql.exec(
         'INSERT OR IGNORE INTO member (user_id, role, joined) VALUES (?, ?, ?)',
@@ -220,6 +234,7 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
     const by = people.find((p) => p.id === uid)!
     this.system(uid, { t: 'created', by, name })
     const others = people.filter((p) => p.id !== uid)
+
     if (others.length) this.system(uid, { t: 'added', by, users: others, name })
   }
 
@@ -232,33 +247,45 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
   manage(uid: string, by: Person, op: GroupOp): System[] | Refused {
     const group = this.group
     const me = this.active(uid)
+
     if (!group || !me) return { refused: 'Not in this group' }
     const actives = this.sql.exec<MemberRow>('SELECT * FROM member WHERE left_seq IS NULL').toArray()
     const isActive = (id: string) => actives.some((a) => a.user_id === id)
+
     if (op.t === 'rename') {
       this.ctx.storage.kv.put('group', { ...group, name: op.name })
+
       return [this.system(uid, { t: 'renamed', by, name: op.name })]
     }
+
     if (op.t === 'leave') {
       const out: System[] = []
       const others = actives.filter((a) => a.user_id !== uid)
+
       if (me.role === 'admin' && others.length && !others.some((a) => a.role === 'admin')) {
         if (!op.successor || !isActive(op.successor.id) || op.successor.id === uid)
           return { refused: 'Choose a new admin first' }
         this.sql.exec("UPDATE member SET role = 'admin' WHERE user_id = ?", op.successor.id)
         out.push(this.system(uid, { t: 'admin', by, user: op.successor, admin: true }))
       }
+
       this.leave(uid, uid)
       out.push(this.system(uid, { t: 'left', by }))
+
       return out
     }
+
     if (me.role !== 'admin') return { refused: 'Only admins can do that' }
+
     switch (op.t) {
       case 'add': {
         const fresh = op.users.filter((u) => !isActive(u.id))
+
         if (!fresh.length) return { refused: 'Already in the group' }
+
         if (actives.length + fresh.length > MAX_MEMBERS) return { refused: `Groups hold up to ${MAX_MEMBERS} people` }
         const seq = this.nextSeq()
+
         for (const u of fresh) {
           // Someone added back starts from here, not from where they left.
           this.sql.exec(
@@ -269,19 +296,25 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
           )
           this.sql.exec('INSERT OR REPLACE INTO delivery (user_id, seq) VALUES (?, ?)', u.id, seq - 1)
         }
+
         return [this.system(uid, { t: 'added', by, users: fresh, name: group.name })]
       }
+
       case 'remove':
         if (op.user.id === uid || !isActive(op.user.id)) return { refused: 'Not in this group' }
         this.leave(op.user.id, uid)
+
         return [this.system(uid, { t: 'removed', by, user: op.user })]
       case 'admin':
         if (op.user.id === uid || !isActive(op.user.id)) return { refused: 'Not in this group' }
         this.sql.exec('UPDATE member SET role = ? WHERE user_id = ?', op.admin ? 'admin' : 'member', op.user.id)
+
         return [this.system(uid, { t: 'admin', by, user: op.user, admin: op.admin })]
       case 'delete':
         this.ctx.storage.kv.put('group', { ...group, deleted: true })
+
         for (const a of actives) this.leave(a.user_id, uid)
+
         return [this.system(uid, { t: 'deleted', by })]
     }
   }
@@ -298,22 +331,27 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
    */
   markRead(uid: string, seq: number): Extract<ServerFrame, { t: 'read' }> | null {
     const me = this.members(uid)?.find((m) => m.user_id === uid)
+
     if (!me) return null
     // Someone out of the group can read up to the entry that took them out.
     const end = me.left_seq ?? this.nextSeq() - 1
     let read: Read = { seq: me.read_seq, ts: me.read_ts }
+
     if (Math.min(seq, end) > read.seq) {
       read = { seq: Math.min(seq, end), ts: Date.now() }
       this.sql.exec('UPDATE member SET read_seq = ?, read_ts = ? WHERE user_id = ?', read.seq, read.ts, uid)
       this.relay(uid, { t: 'read', chat: this.id, uid, ...read })
     }
+
     const { unread } = this.sql
       .exec<{ unread: number }>(
-        "SELECT count(*) AS unread FROM event WHERE kind = 'text' AND sender != ? AND seq > ?",
+        "SELECT count(*) AS unread FROM event WHERE kind = 'text' AND sender != ? AND seq > ? AND seq <= ?",
         uid,
-        read.seq
+        read.seq,
+        end
       )
       .one()
+
     return { t: 'read', chat: this.id, uid, ...read, unread }
   }
 
@@ -349,9 +387,11 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
   async fanOut() {
     if (this.fanning) return void (this.again = true)
     this.fanning = true
+
     try {
       for (;;) {
         this.again = false
+
         // Each member gets the log up to its end, or up to the entry that took them out of the group.
         const behind = this.sql
           .exec<{ user_id: string; seq: number; until: number }>(
@@ -359,16 +399,21 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
              FROM delivery d JOIN member m USING (user_id) WHERE d.seq < until`
           )
           .toArray()
+
         if (!behind.length) {
           if (this.again) continue
           void this.ctx.storage.deleteAlarm()
+
           return
         }
+
         const members = this.sql
           .exec<{ user_id: string }>('SELECT user_id FROM member')
           .toArray()
           .map((r) => r.user_id)
+
         const group = this.group !== undefined
+
         const results = await Promise.allSettled(
           behind.map(async ({ user_id, seq, until }) => {
             const entries = this.read('seq > ? AND seq <= ? ORDER BY seq LIMIT ?', seq, until, PAGE)
@@ -383,7 +428,9 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
             )
           })
         )
+
         const failed = results.filter((r) => r.status === 'rejected')
+
         if (failed.length) {
           console.error(
             'Fan-out failed; retrying',
@@ -391,8 +438,10 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
           )
           this.failures++
           void this.ctx.storage.setAlarm(Date.now() + Math.min(RETRY_MS * 2 ** (this.failures - 1), MAX_RETRY_MS))
+
           return
         }
+
         this.failures = 0
       }
     } finally {
@@ -406,13 +455,17 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
    */
   messages(uid: string, { before, after }: { before?: number; after?: number } = {}): Message[] | null {
     const me = this.members(uid)?.find((m) => m.user_id === uid)
+
     if (!me) return null
     // Someone out of the group keeps the history up to the entry that took them out, and nothing after it.
     const end = me.left_seq ?? Number.MAX_SAFE_INTEGER
+
     if (after !== undefined) {
       const newer = this.read('seq > ? AND seq <= ? ORDER BY seq LIMIT ?', after, end, PAGE + 1)
+
       if (newer.length <= PAGE) return newer
     }
+
     return this.read('seq < ? ORDER BY seq DESC LIMIT ?', Math.min(before ?? end + 1, end + 1), PAGE).reverse()
   }
 }

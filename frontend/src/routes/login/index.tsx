@@ -9,10 +9,13 @@ import { sessionQuery } from '@/lib/session'
 
 type Mode = 'signin' | 'signup'
 
+type Search = { mode: Mode }
+
 export const Route = createFileRoute('/login/')({
-  validateSearch: (search): { mode: Mode } => ({ mode: search.mode === 'signup' ? 'signup' : 'signin' }),
+  validateSearch: (search): Search => ({ mode: search.mode === 'signup' ? 'signup' : 'signin' }),
   beforeLoad: async ({ context }) => {
     const session = await context.queryClient.query({ ...sessionQuery, staleTime: 'static' })
+
     if (session) throw redirect({ to: session.user.username ? '/' : '/login/username' })
   },
   component: Login,
@@ -26,11 +29,14 @@ function Login() {
   const submit = useMutation({
     mutationFn: async (form: FormData) => {
       const password = String(form.get('password'))
+
       if (mode === 'signup') {
         const username = String(form.get('username'))
         await unwrap(authClient.signUp.email({ email: String(form.get('email')), password, username, name: username }))
+
         return
       }
+
       const identifier = String(form.get('identifier')).trim()
       await unwrap(
         identifier.includes('@')

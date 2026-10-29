@@ -9,9 +9,8 @@ import { deleteChat } from '@/lib/api'
 import { firstName } from '@/lib/group-events'
 
 /**
- * Takes the composer's place once you're out of a group: why, and Delete chat to drop it from your list
- * (Paper: "Groups: receipts, leaving, deleting"). Loaded only for
- * someone out of the group.
+ * Takes the composer's place once you're out of a group: why, and Delete chat to drop it from your list (Paper:
+ * "Groups: receipts, leaving, deleting"). Loaded only for someone out of the group.
  */
 export default function LeftGroupBar({ chat, uid }: { chat: Chat; uid: string }) {
   const queryClient = useQueryClient()
@@ -19,6 +18,7 @@ export default function LeftGroupBar({ chat, uid }: { chat: Chat; uid: string })
   const [confirming, setConfirming] = useState(false)
   const by = chat.members.find((m) => m.id === chat.group?.leftBy)
   const who = by ? firstName(by.name) : 'Someone'
+
   const reason = chat.group?.deleted
     ? `${by?.id === uid ? 'You' : who} deleted the group`
     : by?.id === uid

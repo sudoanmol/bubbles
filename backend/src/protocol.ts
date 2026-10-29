@@ -34,13 +34,17 @@ const Entry = {
   reactions: v.record(v.string(), v.string()),
   rev: v.number(),
 }
+
 export const Message = v.variant('kind', [
   v.object({ ...Entry, kind: v.literal('text'), target: v.null() }),
   v.object({ ...Entry, kind: v.literal('patch'), target: v.number() }),
   v.object({ ...Entry, kind: v.literal('system'), target: v.null() }),
 ])
+
 export type Message = v.InferOutput<typeof Message>
+
 export type Text = Extract<Message, { kind: 'text' }>
+
 export type System = Extract<Message, { kind: 'system' }>
 
 /** Most members a group can have: ChatDO fans every entry out to each of them. */
@@ -61,7 +65,8 @@ export type GroupEvent =
   | { t: 'admin'; by: Person; user: Person; admin: boolean }
   | { t: 'deleted'; by: Person }
 
-export const groupEvent = (m: System) => JSON.parse(m.body) as GroupEvent
+// SAFETY: ChatDO.system writes every `system` entry, and its body is always a GroupEvent as JSON.
+export const groupEvent = (body: string) => JSON.parse(body) as GroupEvent
 
 /** The parts of a message that patches change. */
 export type MessageState = Pick<Message, 'body' | 'reply' | 'edited' | 'deleted' | 'reactions'>
@@ -78,8 +83,11 @@ export const ClientFrame = v.variant('t', [
   /** Typing in a chat; sent at most every few seconds while typing. Passed on to the other members, never stored. */
   v.object({ t: v.literal('typing'), chat: ChatId }),
 ])
+
 export type ClientFrame = v.InferOutput<typeof ClientFrame>
+
 export type Patch = Extract<ClientFrame, { t: 'edit' | 'delete' | 'react' }>
+
 export type Write = Exclude<ClientFrame, { t: 'read' | 'typing' }>
 
 /** How long after sending a message you can still edit it, as in iMessage and WhatsApp. Deleting has no limit. */
@@ -88,25 +96,35 @@ export const EDIT_WINDOW_MS = 15 * 60_000
 export const canEdit = (m: { sender: string; ts: number; deleted: boolean }, uid: string, now: number) =>
   m.sender === uid && !m.deleted && now - m.ts <= EDIT_WINDOW_MS
 
+/** Why the server won't take a frame; sent to the client as an `error` frame. */
+export type Refused = { refused: string }
+
 /**
- * A message's state after a patch by `uid` at `ts`, or an error message if the patch is not allowed. The server
- * applies it to store the change; the client applies it to show its own change before the server acks it.
+ * A message's state after a patch by `uid` at `ts`, or a refusal if the patch is not allowed. The server applies it
+ * to store the change; the client applies it to show its own change before the server acks it.
  */
 export function applyPatch(
   m: MessageState & { sender: string; ts: number },
   p: Patch,
   uid: string,
   ts: number
-): MessageState | string {
-  if (m.deleted) return 'That message was deleted'
+): MessageState | Refused {
+  if (m.deleted) return { refused: 'That message was deleted' }
   const state = { body: m.body, reply: m.reply, edited: m.edited, deleted: m.deleted, reactions: m.reactions }
+
   if (p.t === 'react') {
     const { [uid]: _, ...others } = m.reactions
+
     return { ...state, reactions: p.emoji ? { ...others, [uid]: p.emoji } : others }
   }
-  if (m.sender !== uid) return 'You can only change your own messages'
+
+  if (m.sender !== uid) return { refused: 'You can only change your own messages' }
+
   if (p.t === 'edit')
-    return canEdit(m, uid, ts) ? { ...state, body: p.body, edited: ts } : 'Messages can only be edited for 15 minutes'
+    return canEdit(m, uid, ts)
+      ? { ...state, body: p.body, edited: ts }
+      : { refused: 'Messages can only be edited for 15 minutes' }
+
   return { ...state, body: '', reply: null, deleted: true, reactions: {} }
 }
 
@@ -136,6 +154,7 @@ export const ServerFrame = v.variant('t', [
   /** Someone this user is watching (a member of a chat they have open) came online or went away. */
   v.object({ t: v.literal('presence'), uid: v.string(), online: v.boolean(), lastSeen: v.nullable(v.number()) }),
 ])
+
 export type ServerFrame = v.InferOutput<typeof ServerFrame>
 
 /** Ephemeral frames: passed to a user's devices as they happen, never stored or retried. */
@@ -172,6 +191,7 @@ export function nextPreview(cur: Preview | null, m: Message): Preview | null {
     return cur && (m.seq < cur.seq || (m.seq === cur.seq && m.rev <= cur.rev))
       ? cur
       : { seq: m.seq, kind: m.kind, sender: m.sender, body: m.body, deleted: m.deleted, rev: m.rev }
+
   return cur?.seq === m.target && m.seq > cur.rev ? { ...cur, body: m.body, deleted: m.deleted, rev: m.seq } : cur
 }
 
@@ -186,7 +206,9 @@ export type ReadState = { lastSeq: number; readSeq: number; unread: number }
  */
 export function nextRead(s: ReadState, m: Message, uid: string): ReadState {
   if (m.kind !== 'text' || m.seq <= s.lastSeq) return { ...s, lastSeq: Math.max(s.lastSeq, m.seq) }
+
   if (m.sender === uid) return { lastSeq: m.seq, readSeq: m.seq, unread: 0 }
+
   return { ...s, lastSeq: m.seq, unread: s.unread + (m.seq > s.readSeq ? 1 : 0) }
 }
 
@@ -199,7 +221,8 @@ export type GroupState = { name: string; active: boolean }
  */
 export function nextGroup(s: GroupState, m: Message, uid: string): GroupState {
   if (m.kind !== 'system') return s
-  const e = groupEvent(m)
+  const e = groupEvent(m.body)
+
   switch (e.t) {
     case 'created':
     case 'renamed':

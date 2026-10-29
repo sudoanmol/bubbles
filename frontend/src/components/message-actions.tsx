@@ -119,9 +119,12 @@ export function Reactions({
   onReact?: (emoji: string | null) => void
 }) {
   const counts = new Map<string, number>()
+
   for (const emoji of Object.values(message.reactions)) counts.set(emoji, (counts.get(emoji) ?? 0) + 1)
+
   if (!counts.size) return null
   const current = message.reactions[uid]
+
   return (
     <div className={cn('relative -mt-2.5 flex gap-1.5', mine ? 'mr-3 self-end' : 'ml-3 self-start')}>
       {[...counts].map(([emoji, n]) => (

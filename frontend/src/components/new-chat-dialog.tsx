@@ -42,6 +42,7 @@ export default function NewChatDialog({
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next)
+
         if (!next) setGroup(false)
       }}
     >
@@ -146,6 +147,7 @@ function NewGroup({
 }) {
   const [name, setName] = useState('')
   const [people, setPeople] = useState<Profile[]>([])
+
   const create = useMutation({
     mutationFn: () =>
       createGroup(

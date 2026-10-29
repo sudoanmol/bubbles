@@ -10,7 +10,7 @@ export type ConfirmDialogProps = {
   description: ReactNode
   /** The destructive button's label, naming what it does ("Delete for everyone"). */
   action: string
-  onConfirm: () => unknown
+  onConfirm: () => void | Promise<void>
 }
 
 /**
@@ -20,8 +20,11 @@ export type ConfirmDialogProps = {
 export function ConfirmDialog(props: ConfirmDialogProps) {
   // Stays mounted once loaded, so it can animate closed.
   const [loaded, setLoaded] = useState(false)
+
   if (props.open && !loaded) setLoaded(true)
+
   if (!loaded) return null
+
   return (
     <Suspense>
       <ConfirmDialogBody {...props} />

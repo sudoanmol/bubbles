@@ -1,5 +1,6 @@
 export function Logo({ size = 'md' }: { size?: 'md' | 'lg' }) {
   const lg = size === 'lg'
+
   return (
     <div className="flex items-center gap-2.5">
       <div

@@ -13,13 +13,17 @@ const send = (n: number) => ({ t: 'send', cid: `c${n}`, chat: 'fanout', body: `h
 it('delivers to a member that was unreachable, after the chat restarts', async () => {
   await runInDurableObject(chat, async (instance: ChatDO, state) => {
     instance.init(['a', 'b'])
+
     // Every UserDO is down: the writes are stored and acked, but fan-out fails.
     const down = {
       idFromName: (name: string) => env.USER.idFromName(name),
       get: () => ({ deliver: () => Promise.reject(new Error('down')) }),
     }
+
     Object.assign(instance, { env: { ...env, USER: down } })
+
     for (const n of [1, 2, 3]) expect(instance.write('a', send(n))).toMatchObject({ seq: n })
+
     // The writes started a pass; let it fail, then fail twice more.
     while (instance.fanning) await new Promise((r) => setTimeout(r))
     await instance.fanOut()
@@ -41,5 +45,6 @@ it('delivers to a member that was unreachable, after the chat restarts', async (
     expect(row).toMatchObject({ chat_id: 'fanout', last_seq: 3 })
     expect(JSON.parse(row.preview!)).toMatchObject({ seq: 3, body: 'hi 3' })
   }
+
   expect(await runDurableObjectAlarm(chat)).toBe(false)
 })

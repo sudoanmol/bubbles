@@ -15,8 +15,10 @@ it('counts unread messages and clears them on read or reply', async () => {
     runInDurableObject(chat, async (instance: ChatDO) => {
       instance.init(['a', 'b'])
       instance.write(uid, send(cid))
+
       while (instance.fanning) await new Promise((r) => setTimeout(r))
     })
+
   for (const cid of ['b1', 'b2', 'b3']) await write('b', cid)
   expect(await row('a')).toMatchObject({ last_seq: 3, read_seq: 0, unread: 3 })
   expect(await row('b')).toMatchObject({ read_seq: 3, unread: 0 })

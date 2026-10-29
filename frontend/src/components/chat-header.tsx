@@ -73,8 +73,10 @@ export function ChatHeader({ chat, uid }: { chat: Chat; uid: string }) {
 function memberLine(chat: Chat, uid: string) {
   const inIt = chat.members.filter((m) => m.left === null)
   const names = inIt.filter((m) => m.id !== uid).map((m) => firstName(m.name))
+
   if (inIt.some((m) => m.id === uid)) names.push('you')
   const shown = names.length > 4 ? [...names.slice(0, 3), `${names.length - 3} others`] : names
+
   return shown.length < 2 ? (shown[0] ?? '') : `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}`
 }
 
@@ -82,7 +84,9 @@ function memberLine(chat: Chat, uid: string) {
 function PresenceLine({ chatId, peer }: { chatId: string; peer: Profile }) {
   const presence = useQuery(presenceQuery(chatId)).data?.[peer.id]
   const now = useNow(60_000)
+
   if (presence?.online) return <span className="text-[13px] leading-4 font-medium text-mint">online</span>
+
   return (
     <span className="truncate text-[13px] leading-4 font-medium text-muted-foreground">
       {presence?.lastSeen ? `active ${formatAgo(presence.lastSeen, now)}` : `@${peer.username}`}

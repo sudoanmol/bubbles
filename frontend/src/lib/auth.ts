@@ -7,7 +7,9 @@ export const authClient = createAuthClient({ plugins: [usernameClient()] })
 // Better Auth returns `{ data, error }`; mutations need a thrown error.
 export async function unwrap<T>(result: Promise<{ data: T; error: { message?: string } | null }>) {
   const { data, error } = await result
+
   if (error) throw new Error(error.message ?? 'Something went wrong')
+
   return data
 }
 

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { canEdit, groupEvent, type Member, type Read, type Message as Stored, type System } from 'backend/protocol'
+import { canEdit, groupEvent, type Member, type Read, type Message as Stored } from 'backend/protocol'
 import { cn } from 'cn'
 import { isSameDay } from 'date-fns'
 import { BanIcon, ClockIcon, RotateCcwIcon } from 'lucide-react'
@@ -146,21 +146,27 @@ function MessageList({
 
   // How far each of the others has read: their receipt, or their own newest message, whichever is later.
   const others = members.filter((m) => m.id !== uid)
+
   const readOf = new Map<string, Read>(
     others.map((m) => {
       const theirs = messages.findLast((x) => x.sender === m.id && x.kind === 'text' && x.seq !== null)
       const read = reads[m.id] ?? { seq: 0, ts: 0 }
+
       return [m.id, theirs?.seq && theirs.seq > read.seq ? { seq: theirs.seq, ts: theirs.ts } : read]
     })
   )
+
   /** Under your newest message: who has read it. A DM says when; a group names them (Paper: "Groups: …"). */
   const receipt = (m: LocalMessage): ReactNode => {
     if (m.seq === null) return null
     // Whoever was in the chat when it was sent, even if they've left since.
     const present = others.filter((o) => o.left === null || o.left > m.seq!)
     const readers = present.filter((o) => (readOf.get(o.id)?.seq ?? 0) >= m.seq!)
+
     if (!readers.length) return null
+
     if (!group) return `Read ${formatShort(readOf.get(readers[0].id)!.ts)}`
+
     return (
       <ReadBy
         readers={readers.map((r) => ({ ...r, ts: readOf.get(r.id)!.ts }))}
@@ -168,6 +174,7 @@ function MessageList({
       />
     )
   }
+
   const byId = new Map(members.map((m) => [m.id, m]))
 
   return (
@@ -185,6 +192,7 @@ function MessageList({
             const apart = !prev || apartInTime(prev, first)
             const sender = byId.get(first.sender)
             const labelled = group && !mine && first.kind === 'text'
+
             return (
               <Fragment key={first.cid}>
                 {/* Paper: "Time separators". */}
@@ -199,7 +207,7 @@ function MessageList({
                   <MessageScrollerItem className={cn('flex flex-col items-center gap-1 py-1', !apart && 'mt-2')}>
                     {run.map((m) => (
                       <p key={m.cid} className="text-center text-[13px] leading-[18px] text-muted-foreground">
-                        {describe(groupEvent(m as System), uid, (name) => (
+                        {describe(groupEvent(m.body), uid, (name) => (
                           <span className="font-semibold text-ink">{name}</span>
                         )).map((part, i) => (
                           <Fragment key={i}>{part}</Fragment>
@@ -218,6 +226,7 @@ function MessageList({
                     {run.map((m, i) => {
                       const react = (emoji: string | null) => patchMessage(queryClient, uid, m, { t: 'react', emoji })
                       const quoted = m.reply && messages.find((q) => q.seq === m.reply!.seq)
+
                       return (
                         <MessageScrollerItem key={m.cid} messageId={m.cid}>
                           <Message align={mine ? 'end' : 'start'}>
@@ -347,7 +356,9 @@ function MessageList({
         title="Delete this message?"
         description="It's removed for everyone in the chat. They'll see that you deleted a message."
         action="Delete for everyone"
-        onConfirm={() => deleting && patchMessage(queryClient, uid, deleting, { t: 'delete' })}
+        onConfirm={() => {
+          if (deleting) patchMessage(queryClient, uid, deleting, { t: 'delete' })
+        }}
       />
     </MessageScroller>
   )
@@ -360,6 +371,7 @@ const apartInTime = (a: LocalMessage, b: LocalMessage) => !isSameDay(a.ts, b.ts)
 
 function onVisibility(listener: () => void) {
   document.addEventListener('visibilitychange', listener)
+
   return () => document.removeEventListener('visibilitychange', listener)
 }
 
@@ -369,13 +381,16 @@ function onVisibility(listener: () => void) {
  */
 function runs(messages: LocalMessage[]) {
   const out: LocalMessage[][] = []
+
   for (const m of messages) {
     const run = out.at(-1)
     const last = run?.at(-1)
     const together = last?.kind === m.kind && (m.kind === 'system' || last.sender === m.sender)
+
     if (run && last && together && !apartInTime(last, m)) run.push(m)
     else out.push([m])
   }
+
   return out
 }
 
@@ -383,6 +398,7 @@ function runs(messages: LocalMessage[]) {
 function corners(mine: boolean, first: boolean, last: boolean) {
   const top = !first && (mine ? 'rounded-tr-[6px]' : 'rounded-tl-[6px]')
   const bottom = (!last || first) && (mine ? 'rounded-br-[6px]' : 'rounded-bl-[6px]')
+
   return cn(top, bottom)
 }
 
@@ -390,6 +406,7 @@ function corners(mine: boolean, first: boolean, last: boolean) {
 function Status({ message, read }: { message: LocalMessage; read: ReactNode }) {
   const queryClient = useQueryClient()
   const connection = useConnection()
+
   if (message.failed)
     return (
       <MessageFooter className="gap-2.5">
@@ -411,6 +428,7 @@ function Status({ message, read }: { message: LocalMessage; read: ReactNode }) {
         </button>
       </MessageFooter>
     )
+
   if (message.seq === null && connection !== 'online')
     return (
       <MessageFooter className="gap-[5px]">
@@ -418,6 +436,7 @@ function Status({ message, read }: { message: LocalMessage; read: ReactNode }) {
         Waiting for network
       </MessageFooter>
     )
+
   return (
     <MessageFooter>
       {message.edited && 'Edited · '}
@@ -436,11 +455,13 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] })
   const load = useMutation({
     mutationFn: async (before: number) => {
       const local = await cachedOlder(chatId, before, PAGE)
+
       if (local.length) return local
       const uid = currentUid()
       const page = await api<Stored[]>(`/chats/${chatId}/messages?before=${before}`)
       checkAccount(uid)
       void saveMessages(chatId, page)
+
       return page
     },
     // A few tries, then it waits for the connection to come back rather than asking again while the line stays put.
@@ -460,10 +481,12 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] })
 
   // Loads when this line at the top of the list is actually on screen, not merely before the scroller has measured.
   const [onScreen, setOnScreen] = useState(false)
+
   const sentinel = useCallback((el: HTMLElement | null) => {
     if (!el) return
     const observer = new IntersectionObserver(([entry]) => setOnScreen(entry.isIntersecting))
     observer.observe(el)
+
     return () => observer.disconnect()
   }, [])
 
@@ -472,6 +495,7 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] })
   }, [onScreen, hasOlder, oldest, load])
 
   if (!hasOlder) return null
+
   // Paper: "Offline & delivery". Retry clears the error; the sentinel is still on screen, so the effect loads again.
   return (
     <div

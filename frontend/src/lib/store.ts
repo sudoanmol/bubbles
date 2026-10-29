@@ -17,6 +17,7 @@ interface Schema extends DBSchema {
 }
 
 let current: { uid: string; db: Promise<IDBPDatabase<Schema>> } | undefined
+
 // Dev only: a hot update would load a second copy of this module without the open database. Reload the page instead.
 import.meta.hot?.accept(() => location.reload())
 
@@ -35,6 +36,7 @@ export function openStore(uid: string) {
           db.createObjectStore('inbox', { keyPath: 'chatId' })
           db.createObjectStore('chats', { keyPath: 'id' })
         }
+
         // 3: the inbox and chats gained read state; 4: groups. Refetched; the outbox (unsent messages) is kept.
         if (from === 2 || from === 3) {
           void tx.objectStore('inbox').clear()
@@ -43,7 +45,10 @@ export function openStore(uid: string) {
       },
       // Another tab is deleting this database (sign out) or upgrading it: let go, so it isn't left waiting.
       blocking(_current, _blocked, event) {
-        ;(event.target as IDBDatabase).close()
+        // SAFETY: a versionchange event fires at the open database.
+        const db = event.target as IDBDatabase
+        db.close()
+
         if (current?.uid === uid) current = undefined
       },
     }),
@@ -75,16 +80,20 @@ export async function deleteStore() {
  */
 async function use<T>(fallback: T, fn: (db: IDBPDatabase<Schema>) => Promise<T>) {
   const account = current
+
   try {
     if (!account) return fallback
+
     return await fn(await account.db)
   } catch (error) {
     console.error('Local store:', error)
+
     // A database closed by sign-out or another tab isn't a broken browser.
     if (current === account && !failed) {
       failed = true
       listeners.forEach((l) => l())
     }
+
     return fallback
   }
 }
@@ -97,6 +106,7 @@ export function useStorageFailed() {
   return useSyncExternalStore(
     (l) => {
       listeners.add(l)
+
       return () => listeners.delete(l)
     },
     () => failed
@@ -109,10 +119,12 @@ const chatRange = (chat: string, before = Infinity) => IDBKeyRange.bound([chat, 
 async function acked(db: IDBPDatabase<Schema>, chat: string, limit: number, before?: number) {
   const out: Message[] = []
   let cursor = await db.transaction('messages').store.openCursor(chatRange(chat, before), 'prev')
+
   while (cursor && out.length < limit) {
     out.push(cursor.value)
     cursor = await cursor.continue()
   }
+
   return out.reverse()
 }
 
@@ -132,10 +144,13 @@ export const saveMessages = (chat: string, messages: Message[], dropBefore?: num
   use(undefined, async (db) => {
     const tx = db.transaction(['messages', 'outbox'], 'readwrite')
     const store = tx.objectStore('messages')
+
     const put = async (m: Message) => {
       const held = await store.get([chat, m.seq])
+
       if (!held || held.rev <= m.rev) await store.put(m)
     }
+
     await Promise.all([
       dropBefore !== undefined && store.delete(chatRange(chat, dropBefore)),
       ...messages.flatMap((m) => [put(m), tx.objectStore('outbox').delete(m.cid)]),

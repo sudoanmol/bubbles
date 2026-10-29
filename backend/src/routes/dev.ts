@@ -25,9 +25,11 @@ export const dev = new Hono<AppEnv>().get('/login/:username', async (c) => {
     .select({ id: user.id })
     .from(user)
     .where(eq(user.username, c.req.param('username').toLowerCase()))
+
   if (!found) throw new HTTPException(404, { message: 'No one has that username' })
 
   const { test } = await testAuth.$context
+
   for (const cookie of await test.getCookies({ userId: found.id })) {
     setCookie(c, cookie.name, cookie.value, {
       path: cookie.path,
@@ -37,5 +39,6 @@ export const dev = new Hono<AppEnv>().get('/login/:username', async (c) => {
       expires: cookie.expires ? new Date(cookie.expires * 1000) : undefined,
     })
   }
+
   return c.redirect('/')
 })

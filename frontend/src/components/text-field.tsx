@@ -8,6 +8,7 @@ export function TextField({
   ...props
 }: ComponentProps<'input'> & { label: string; hint?: ReactNode; leading?: ReactNode; trailing?: ReactNode }) {
   const id = useId()
+
   return (
     <div className="flex flex-col gap-2">
       <label htmlFor={id} className="text-sm font-semibold">

@@ -15,9 +15,12 @@ const row = async (uid: string) => (await user(uid).inbox()).find((r) => r.chat_
 const inChat = <T>(fn: (c: ChatDO) => T) =>
   runInDurableObject(chat, async (instance: ChatDO) => {
     const out = fn(instance)
+
     while (instance.fanning) await new Promise((r) => setTimeout(r))
+
     return out
   })
+
 const send = (uid: string, cid: string) => inChat((c) => c.write(uid, { t: 'send', cid, chat: 'group', body: cid }))
 const manage = (uid: string, op: GroupOp) => inChat((c) => c.manage(uid, p(uid), op))
 
@@ -35,6 +38,9 @@ it('runs a group: removal, admins, leaving and coming back', async () => {
   expect(await inChat((c) => c.write('c', { t: 'send', cid: 'c1', chat: 'group', body: 'hi' }))).toEqual({
     refused: 'Not a member of this chat',
   })
+  // Reading to the end clears their unread count: what was said after they left isn't theirs to read.
+  await user('c').read('group', 99)
+  expect(await row('c')).toMatchObject({ read_seq: 3, unread: 0 })
 
   // The only admin can't leave without handing over, and the successor becomes admin as they go.
   expect(await manage('a', { t: 'leave' })).toEqual({ refused: 'Choose a new admin first' })

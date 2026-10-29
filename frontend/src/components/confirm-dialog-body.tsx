@@ -23,12 +23,14 @@ export default function ConfirmDialogBody({
   onConfirm,
 }: ConfirmDialogProps) {
   const run = useMutation({ mutationFn: async () => onConfirm(), onSuccess: () => onOpenChange(false) })
+
   return (
     <AlertDialog
       open={open}
       onOpenChange={(next) => {
         if (run.isPending) return
         onOpenChange(next)
+
         if (!next) run.reset()
       }}
     >

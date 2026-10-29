@@ -24,7 +24,8 @@ frontend/   Worker `bubbles` (public): single-page app on TanStack Router, React
 tests/chaos.ts  chaos test for the delivery protocol (`pnpm chaos`)
 tests/rules.ts  the pure log and inbox rules under every arrival order
 tests/store.ts  the IndexedDB store (fake-indexeddb): rev guard, outbox across reloads, sign-out with two tabs open
-backend/test/   Durable Objects in the Workers runtime (@cloudflare/vitest-plugin): fan-out after failure and eviction
+backend/test/   Durable Objects and D1 in the Workers runtime (@cloudflare/vitest-plugin): fan-out after failure and eviction
+tools/oxlint/anti-slop/  vendored anti-slop lint rules, ours to edit (source commit and local changes in UPSTREAM.md)
 .env        the only env file, shared by every package (copy from .env.example)
 ```
 
@@ -38,6 +39,7 @@ backend/test/   Durable Objects in the Workers runtime (@cloudflare/vitest-plugi
 | Typecheck            | `pnpm typecheck`                                                                                                             |
 | Build                | `pnpm build`                                                                                                                 |
 | Lint / format        | `pnpm lint`, `pnpm fmt` (oxlint + oxfmt; also run on pre-commit via husky + lint-staged)                                     |
+| Dead code            | `pnpm knip` (unused files, exports and dependencies; config in `knip.jsonc`; also run on pre-commit)                         |
 | Worker binding types | `pnpm -C <pkg> cf-typegen` after editing that package's `wrangler.jsonc`                                                     |
 
 Assume the dev server is already running. Verify work with `pnpm typecheck` and `pnpm build`.
@@ -91,7 +93,7 @@ Other stores: D1 (users/auth only) · R2 (media) · Queues (web push) · Analyti
 | Storage                | DO SQLite (`new_sqlite_classes`, raw `ctx.storage.sql`), D1 + Drizzle, R2                                    |
 | Async                  | Queues → Web Push (VAPID)                                                                                    |
 | Limits / observability | Rate Limiting binding, Workers Logs, Analytics Engine                                                        |
-| Tooling                | oxlint, oxfmt, husky + lint-staged                                                                           |
+| Tooling                | oxlint, oxfmt, husky + lint-staged, Knip                                                                     |
 
 ## Auth
 

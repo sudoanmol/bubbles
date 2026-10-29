@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/knip/schema-jsonc.json",
+  // `cloudflare:workers` and `cloudflare:test` are Workers runtime modules, not an npm package.
+  "ignoreDependencies": ["cloudflare"],
+  // Vendored lint rules (see UPSTREAM.md there): unused parts stay so syncing with upstream is easy, and the Effect rules
+  // are copied but not registered.
+  "ignoreIssues": { "tools/oxlint/anti-slop/**": ["files", "exports", "types"] },
+  "workspaces": {
+    ".": {
+      // tests/tsconfig.json borrows Vite's client types from the frontend package.
+      "ignoreDependencies": ["vite"],
+      // tests/chaos.ts runs `pnpm exec wrangler` from backend/, which lists it.
+      "ignoreBinaries": ["wrangler"],
+    },
+    "backend": {
+      // Knip resolves tsconfig `types` from the workspace root instead of test/; the file exists.
+      "ignoreUnresolved": ["../worker-configuration.d.ts"],
+    },
+    "frontend": {
+      // shadcn components keep their unused parts so they stay close to upstream; the build drops them.
+      "ignoreIssues": { "src/components/ui/**": ["exports"] },
+    },
+  },
+}

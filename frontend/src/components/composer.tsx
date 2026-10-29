@@ -46,25 +46,32 @@ export function Composer({
 
   // Entering edit puts the message in the field and keeps your draft for after; leaving edit brings the draft back.
   const [entered, setEntered] = useState<ComposerMode>(null)
+
   if (mode !== entered) {
     setEntered(mode)
+
     if (mode?.t === 'edit') {
       if (entered?.t !== 'edit') setDraft(body)
       setBody(mode.message.body)
     } else if (entered?.t === 'edit') setBody(draft)
   }
+
   useEffect(() => {
     if (mode) input.current?.focus()
   }, [mode])
 
   const send = () => {
     const text = body.trim()
+
     if (!text) return
+
     if (mode?.t === 'edit') {
       if (text !== mode.message.body) patchMessage(queryClient, uid, mode.message, { t: 'edit', body: text })
       onMode(null)
+
       return
     }
+
     sendMessage(queryClient, chatId, uid, text, mode?.message)
     setBody('')
     onMode(null)
@@ -155,6 +162,7 @@ export function Composer({
             value={body}
             onChange={(e) => {
               setBody(e.target.value)
+
               if (e.target.value.trim() && mode?.t !== 'edit') sendTyping(chatId)
             }}
             onKeyDown={(e) => {
@@ -162,7 +170,9 @@ export function Composer({
                 e.preventDefault()
                 send()
               }
+
               if (e.key === 'Escape' && mode) onMode(null)
+
               // Up in an empty field edits your last message, as in Slack and Discord.
               if (e.key === 'ArrowUp' && !body && !mode) {
                 const last = withPending(
@@ -171,6 +181,7 @@ export function Composer({
                   queryClient.getQueryData(outboxQuery.queryKey) ?? [],
                   uid
                 ).findLast((m) => m.kind === 'text' && m.sender === uid && m.seq !== null && !m.deleted)
+
                 if (last && canEdit(last, uid, Date.now())) {
                   e.preventDefault()
                   onMode({ t: 'edit', message: last })

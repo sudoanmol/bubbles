@@ -18,17 +18,32 @@ export type Pending = ((Extract<ClientFrame, { t: 'send' }> & { local: LocalMess
 export function withPending(chat: string, log: Message[], outbox: Pending[], uid: string): LocalMessage[] {
   const acked = new Set(log.map((m) => m.cid))
   let out: LocalMessage[] = log.filter((m) => m.kind !== 'patch')
+
   for (const p of outbox) {
     if (p.chat !== chat || acked.has(p.cid)) continue
-    if (p.t === 'send') out = [...out, { ...p.local, failed: p.failed }]
+
+    if (p.t === 'send') out.push({ ...p.local, failed: p.failed })
     else
       out = out.map((m) => {
         if (m.seq !== p.seq) return m
         const next = applyPatch(m, p, uid, Date.now())
-        return typeof next === 'string' ? m : { ...m, ...next }
+
+        return 'refused' in next ? m : { ...m, ...next }
       })
   }
+
   return out
+}
+
+/**
+ * What to send again on connect, in write order: this tab's outbox, which still holds its frames if IndexedDB failed
+ * to store them, plus what other tabs left unsent in IndexedDB. This tab's copy of a frame wins. A frame the server
+ * refused waits for Retry.
+ */
+export function toReplay(stored: Pending[], held: Pending[]) {
+  const byCid = new Map([...stored, ...held].map((p) => [p.cid, p]))
+
+  return [...byCid.values()].filter((p) => !p.failed).sort((a, b) => (a.cid < b.cid ? -1 : 1))
 }
 
 /**
@@ -37,10 +52,12 @@ export function withPending(chat: string, log: Message[], outbox: Pending[], uid
  */
 export function cursor(messages: Message[]) {
   let hi: number | undefined
+
   for (const m of messages) {
     if (hi === undefined || m.seq === hi + 1) hi = m.seq
     else if (m.seq > hi + 1) break
   }
+
   return hi
 }
 
@@ -51,16 +68,21 @@ export function cursor(messages: Message[]) {
  */
 export function merge(log: Message[], incoming: Message[]) {
   const bySeq = new Map(log.map((m) => [m.seq, m]))
+
   for (const m of incoming) {
     const held = bySeq.get(m.seq)
+
     if (!held || held.rev <= m.rev) bySeq.set(m.seq, m)
   }
+
   for (const p of bySeq.values()) {
     const target = p.kind === 'patch' ? bySeq.get(p.target) : undefined
+
     if (target && target.rev < p.seq) {
       const { body, reply, edited, deleted, reactions } = p
       bySeq.set(target.seq, { ...target, body, reply, edited, deleted, reactions, rev: p.seq })
     }
   }
+
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
 }

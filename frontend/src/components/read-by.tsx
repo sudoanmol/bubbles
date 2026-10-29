@@ -8,6 +8,7 @@ const loadPopover = () => import('@/components/read-by-popover')
 const ReadByPopover = lazy(loadPopover)
 
 export type ReadByProps = { readers: (Profile & { ts: number })[]; waiting: Profile[] }
+
 export const triggerClass = 'rounded hover:text-ink'
 
 /**
@@ -18,11 +19,14 @@ export function ReadBy({ readers, waiting }: ReadByProps) {
   const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState(false)
   const names = readers.map((r) => firstName(r.name))
+
   const label =
     waiting.length === 0
       ? 'Read by everyone'
       : `Read by ${names.length > 3 ? `${names.slice(0, 2).join(', ')} and ${names.length - 2} others` : names.join(', ')}`
+
   const preload = () => void loadPopover()
+
   const trigger = (
     <button
       type="button"
@@ -37,7 +41,9 @@ export function ReadBy({ readers, waiting }: ReadByProps) {
       {label}
     </button>
   )
+
   if (!loaded) return trigger
+
   return (
     <Suspense fallback={trigger}>
       <ReadByPopover label={label} readers={readers} waiting={waiting} open={open} onOpenChange={setOpen} />

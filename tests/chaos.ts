@@ -1,7 +1,8 @@
 // Chaos test for the delivery protocol (AGENTS.md, phase 2).
 //
-// Scripted clients DM each other as fast as they can (messages, plus edits, deletes and reactions) while their sockets are killed at random and, partway through,
-// the backend is redeployed (locally: a source file is touched, so `wrangler dev` restarts every Durable Object).
+// Scripted clients DM each other as fast as they can (messages, plus edits, deletes and reactions) while their
+// sockets are killed at random and, partway through, the backend is redeployed (locally: a source file is touched,
+// so `wrangler dev` restarts every Durable Object).
 // Clients behave like the app: an outbox replayed on every connect, a cursor per chat, gap repair over HTTP.
 // When the dust settles, every message written must be stored exactly once, each device's messages in the order
 // it wrote them, and every client's copy of every chat must equal the server's.
@@ -14,6 +15,8 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 import { monotonicFactory } from 'ulid'
+
+import type { Write } from '../backend/src/protocol.ts'
 
 const BASE = process.env.BASE ?? 'http://localhost:3100'
 const REDEPLOY = process.env.REDEPLOY !== '0'
@@ -34,8 +37,8 @@ type Message = {
   reactions: Record<string, string>
   rev: number
 } & ({ kind: 'text'; target: null } | { kind: 'patch'; target: number })
+
 type Frame = { t: 'ack'; msg: Message } | { t: 'msg'; msg: Message } | { t: 'error'; cid?: string; message: string }
-type Out = { t: string; chat: string; cid: string; [k: string]: unknown }
 
 /** What every copy of a message must agree on once the dust settles. */
 const state = (m: Message) => JSON.stringify([m.seq, m.cid, m.kind, m.body, m.edited, m.deleted, m.reactions])
@@ -51,11 +54,17 @@ async function http<T>(cookie: string, path: string, init: RequestInit = {}): Pr
         ...init,
         headers: { 'content-type': 'application/json', origin: BASE, cookie, ...init.headers },
       })
-      if (res.ok) return (await res.json()) as T
+
+      if (res.ok) {
+        // SAFETY: callers name the type the route at `path` responds with.
+        return (await res.json()) as T
+      }
+
       if (res.status < 500 || attempt > 40) throw new Error(`${path}: ${res.status} ${await res.text()}`)
     } catch (error) {
       if (attempt > 40) throw error
     }
+
     await sleep(250)
   }
 }
@@ -66,12 +75,17 @@ async function signUp(username: string) {
     headers: { 'content-type': 'application/json', origin: BASE },
     body: JSON.stringify({ email: `${username}@chaos.test`, password: 'chaos-password-1', name: username, username }),
   })
+
   if (!res.ok) throw new Error(`sign up ${username}: ${res.status} ${await res.text()}`)
+
   const cookie = res.headers
     .getSetCookie()
     .map((c) => c.split(';')[0])
     .join('; ')
+
+  // SAFETY: Better Auth answers a sign-up with the new user.
   const { user } = (await res.json()) as { user: { id: string } }
+
   return { username, id: user.id, cookie }
 }
 
@@ -83,7 +97,7 @@ class Device {
   ulid = monotonicFactory()
   ws: WebSocket | null = null
   /** Written, not yet acked; replayed in write order on every connect. */
-  outbox = new Map<string, Out>()
+  outbox = new Map<string, Write>()
   /** Every message this device wrote, in write order. */
   written: { chat: string; cid: string }[] = []
   /** Every edit, delete and reaction this device wrote, and those the server refused (their target was deleted). */
@@ -103,27 +117,35 @@ class Device {
     this.uid = uid
     this.cookie = cookie
     this.chats = chats
+
     for (const c of chats) this.log.set(c, new Map())
   }
 
   connect() {
     if (this.closed) return
-    // Node's WebSocket (undici) takes request headers, so the session cookie rides along like in a browser.
+    // SAFETY: Node's WebSocket (undici) takes request headers, which the DOM typings don't declare, so the session
+    // cookie rides along like in a browser.
     const ws = new WebSocket(BASE.replace(/^http/, 'ws') + '/api/ws', { headers: { cookie: this.cookie } } as never)
     this.ws = ws
     ws.onopen = () => {
       this.connects++
+
       for (const m of this.outbox.values()) ws.send(JSON.stringify(m))
+
       // Like the app after a reconnect: catch up on what was missed while away.
       for (const c of this.chats) void this.repair(c)
     }
+
+    // SAFETY: the server sends this test only acks, messages and errors: it never reads, types or watches presence.
     ws.onmessage = (event) => this.receive(JSON.parse(String(event.data)) as Frame)
     ws.onclose = () => {
       if (!this.killing && !this.closed) this.drops++
       this.killing = false
+
       if (this.ws === ws) this.ws = null
       setTimeout(() => this.connect(), 50 + Math.random() * 250)
     }
+
     ws.onerror = () => {}
   }
 
@@ -133,8 +155,9 @@ class Device {
     this.ws.close()
   }
 
-  write(f: Out) {
+  write(f: Write) {
     this.outbox.set(f.cid, f)
+
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(f))
   }
 
@@ -144,8 +167,10 @@ class Device {
     const texts = [...this.log.get(chat)!.values()].filter((m) => m.kind === 'text' && !m.deleted)
     const own = texts.filter((m) => m.sender === this.uid)
     const roll = Math.random()
+
     if (roll < 0.15 && texts.length) {
       this.patches.push(cid)
+
       return this.write({
         t: 'react',
         chat,
@@ -154,23 +179,31 @@ class Device {
         emoji: roll < 0.03 ? null : pick(['👍', '😂', '🔥']),
       })
     }
+
     if (roll < 0.25 && own.length) {
       this.patches.push(cid)
+
       return this.write({ t: 'edit', chat, cid, seq: pick(own).seq, body: `${body} (edited)` })
     }
+
     if (roll < 0.28 && own.length) {
       this.patches.push(cid)
+
       return this.write({ t: 'delete', chat, cid, seq: pick(own).seq })
     }
+
     this.written.push({ chat, cid })
     this.write({ t: 'send', chat, cid, body })
   }
 
   receive(f: Frame) {
     if (f.t === 'ack') this.outbox.delete(f.msg.cid)
+
     if (f.t === 'ack' || f.t === 'msg') this.store(f.msg)
+
     if (f.t === 'error') {
       this.errors.push(f.message)
+
       // A change to a message someone deleted meanwhile is refused for good, as in the app. A message stays in the
       // outbox and goes again on the next connect.
       if (f.cid && f.message === 'That message was deleted') {
@@ -187,14 +220,19 @@ class Device {
   store(m: Message) {
     const log = this.log.get(m.chat)!
     const prev = log.get(m.seq)
+
     if (prev && prev.cid !== m.cid) this.conflicts.push(`${m.chat} seq ${m.seq}: ${prev.cid} then ${m.cid}`)
+
     if (prev && prev.rev > m.rev) return
     log.set(m.seq, m)
     const target = log.get(m.kind === 'patch' ? m.target : m.seq)
+
     if (target?.kind !== 'text') return
     let newest: Message | undefined
+
     for (const p of log.values())
       if (p.kind === 'patch' && p.target === target.seq && p.seq > (newest?.seq ?? target.rev)) newest = p
+
     if (newest) {
       const { body, edited, deleted, reactions } = newest
       log.set(target.seq, { ...target, body, edited, deleted, reactions, rev: newest.seq })
@@ -204,7 +242,9 @@ class Device {
   cursor(chat: string) {
     const log = this.log.get(chat)!
     let hi = 0
+
     while (log.has(hi + 1)) hi++
+
     return hi
   }
 
@@ -213,9 +253,11 @@ class Device {
     for (;;) {
       const hi = this.cursor(chat)
       const page = await http<Message[]>(this.cookie, `/api/chats/${chat}/messages?after=${hi}`)
+
       if (!page.length) return
       page.forEach((m) => this.store(m))
       let before = page[0].seq
+
       while (before > hi + 1) {
         const older = await http<Message[]>(this.cookie, `/api/chats/${chat}/messages?before=${before}`)
         older.forEach((m) => this.store(m))
@@ -231,18 +273,22 @@ class Device {
 const entry = new URL('../backend/src/index.ts', import.meta.url)
 const original = readFileSync(entry, 'utf8')
 let edited: string | undefined
+
 const revert = () => {
   if (edited !== undefined && readFileSync(entry, 'utf8') === edited) writeFileSync(entry, original)
   edited = undefined
 }
+
 process.on('exit', revert)
 
 // This run's accounts leave the local database when it ends, pass or fail; other runs' are left alone. Their sessions
 // and accounts go with them (ON DELETE CASCADE). ponytail: their chats' Durable Object storage stays in .wrangler/state.
 const run = Date.now().toString(36)
 const local = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)
+
 process.on('exit', () => {
   if (!local) return
+
   try {
     execFileSync(
       'pnpm',
@@ -265,6 +311,7 @@ process.on('exit', () => {
     )
   }
 })
+
 process.on('SIGINT', () => process.exit(130))
 
 function redeploy() {
@@ -280,36 +327,43 @@ async function main() {
   const users = await Promise.all(Array.from({ length: USERS }, (_, i) => signUp(`chaos_${run}_${i}`)))
   // A ring of DMs, so every user is in two chats.
   const chatsOf = new Map<string, string[]>(users.map((u) => [u.id, []]))
+
   for (let i = 0; i < USERS; i++) {
     const [a, b] = [users[i], users[(i + 1) % USERS]]
     const { chatId } = await http<{ chatId: string }>(a.cookie, `/api/dms/${b.username}`, { method: 'POST' })
     chatsOf.get(a.id)!.push(chatId)
     chatsOf.get(b.id)!.push(chatId)
   }
+
   const devices = users.flatMap((u) =>
     Array.from(
       { length: DEVICES_PER_USER },
       (_, d) => new Device(`${u.username}#${d}`, u.id, u.cookie, chatsOf.get(u.id)!)
     )
   )
+
   devices.forEach((d) => d.connect())
   await sleep(1000)
 
   // Chaos: kill a random socket every KILL_EVERY_MS while everyone sends.
   let kills = 0
+
   const chaos = setInterval(() => {
     pick(devices).kill()
     kills++
   }, KILL_EVERY_MS)
+
   let redeployed = false
   await Promise.all(
     devices.map(async (d) => {
       for (let i = 0; i < MESSAGES_PER_DEVICE; i++) {
         d.act(pick(d.chats), `${d.name} ${i}`)
+
         if (REDEPLOY && !redeployed && d === devices[0] && i === MESSAGES_PER_DEVICE / 2) {
           redeployed = true
           redeploy()
         }
+
         await sleep(SEND_EVERY_MS * (0.5 + Math.random()))
       }
     })
@@ -318,6 +372,7 @@ async function main() {
 
   // Let every outbox drain, then a final catch-up, as when an app comes back to the foreground.
   const deadline = Date.now() + 60_000
+
   while (devices.some((d) => d.outbox.size) && Date.now() < deadline) await sleep(250)
   await Promise.all(devices.flatMap((d) => d.chats.map((c) => d.repair(c))))
   devices.forEach((d) => {
@@ -327,48 +382,62 @@ async function main() {
 
   // The server's copy of each chat, read in full.
   const server = new Map<string, Message[]>()
+
   for (const chat of new Set([...chatsOf.values()].flat())) {
     const owner = users.find((u) => chatsOf.get(u.id)!.includes(chat))!
     const all: Message[] = []
     let page = await http<Message[]>(owner.cookie, `/api/chats/${chat}/messages`)
+
     while (page.length) {
       all.unshift(...page)
+
       if (page[0].seq === 1) break
       page = await http<Message[]>(owner.cookie, `/api/chats/${chat}/messages?before=${page[0].seq}`)
     }
+
     server.set(chat, all)
   }
 
   const failures: string[] = []
   const stored = new Map<string, Message>()
+
   for (const [chat, messages] of server) {
     messages.forEach((m, i) => {
       if (m.seq !== i + 1) failures.push(`${chat}: seq ${m.seq} at position ${i + 1} (gap or reorder)`)
+
       if (stored.has(m.cid)) failures.push(`${chat}: cid ${m.cid} stored twice`)
       stored.set(m.cid, m)
     })
   }
+
   for (const d of devices) {
     failures.push(...d.conflicts.map((c) => `${d.name}: ${c}`))
+
     if (d.outbox.size) failures.push(`${d.name}: ${d.outbox.size} frames never acked`)
+
     for (const cid of d.patches)
       if (!stored.has(cid) && !d.refused.has(cid)) failures.push(`${d.name}: change ${cid} lost`)
     // Exactly once, and in the order this device wrote them.
     const lastSeq = new Map<string, number>()
+
     for (const { chat, cid } of d.written) {
       const m = stored.get(cid)
+
       if (!m) {
         failures.push(`${d.name}: ${cid} lost`)
         continue
       }
+
       if ((lastSeq.get(chat) ?? 0) >= m.seq) failures.push(`${d.name}: ${cid} stored out of write order`)
       lastSeq.set(chat, m.seq)
     }
+
     // This device's copy of each chat equals the server's.
     for (const chat of d.chats) {
       const mine = [...d.log.get(chat)!.values()].sort((a, b) => a.seq - b.seq)
       const theirs = server.get(chat)!
       const same = mine.length === theirs.length && mine.every((m, i) => state(m) === state(theirs[i]))
+
       if (!same) failures.push(`${d.name}: copy of ${chat} differs (${mine.length} vs ${theirs.length} entries)`)
     }
   }
@@ -383,10 +452,12 @@ async function main() {
       (redeployed ? ', 2 redeploys' : '') +
       (errors.length ? `, ${errors.length} refused (${[...new Set(errors)].join('; ')})` : '')
   )
+
   if (failures.length) {
     console.error(`FAIL: ${failures.length} problems\n` + failures.slice(0, 30).join('\n'))
     process.exit(1)
   }
+
   console.log('PASS: every message and change stored exactly once, in order, and every client matches the server')
   process.exit(0)
 }

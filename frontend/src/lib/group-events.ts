@@ -1,4 +1,4 @@
-import type { GroupEvent, Person } from 'backend/protocol'
+import { groupEvent, type GroupEvent, type Person } from 'backend/protocol'
 
 export const firstName = (name: string) => name.split(' ')[0]
 
@@ -9,12 +9,16 @@ export const firstName = (name: string) => name.split(' ')[0]
 export function describe<T>(e: GroupEvent, uid: string, name: (s: string) => T): (T | string)[] {
   const who = (p: Person) => name(p.id === uid ? 'You' : firstName(p.name))
   const whom = (p: Person) => (p.id === uid ? 'you' : name(firstName(p.name)))
+
   const list = (people: Person[]) => {
     const shown = people.length > 4 ? people.slice(0, 3) : people
     const parts: (T | string)[] = shown.map(whom)
+
     if (shown.length < people.length) parts.push(`${people.length - shown.length} others`)
+
     return parts.flatMap((p, i) => (i === 0 ? [p] : [i === parts.length - 1 ? ' and ' : ', ', p]))
   }
+
   switch (e.t) {
     case 'created':
       return [who(e.by), ` created “${e.name}”`]
@@ -36,5 +40,4 @@ export function describe<T>(e: GroupEvent, uid: string, name: (s: string) => T):
 }
 
 /** The same sentence as plain text, from a stored event body. */
-export const describeText = (body: string, uid: string) =>
-  describe(JSON.parse(body) as GroupEvent, uid, (s) => s).join('')
+export const describeText = (body: string, uid: string) => describe(groupEvent(body), uid, (s) => s).join('')

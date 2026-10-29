@@ -12,6 +12,7 @@ export const dms = new Hono<AppEnv>().post('/:username', async (c) => {
     .select({ id: user.id })
     .from(user)
     .where(eq(user.username, c.req.param('username').toLowerCase()))
+
   if (!peer) throw new HTTPException(404, { message: 'No one has that username' })
 
   const members = [...new Set([c.var.uid, peer.id])].sort()
@@ -20,5 +21,6 @@ export const dms = new Hono<AppEnv>().post('/:username', async (c) => {
 
   await chatDO(c.env, id).init(members)
   await userDO(c.env, c.var.uid).open(id, peer.id)
+
   return c.json({ chatId: id })
 })

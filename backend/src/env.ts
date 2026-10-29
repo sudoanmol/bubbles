@@ -12,6 +12,8 @@ export const chatDO = (env: CloudflareBindings, id: string) => env.CHAT.get(env.
 /** Unknown or malformed chat ids are a 404, the same as chats the user is not in. */
 export function parseChatId(id: string) {
   const parsed = v.safeParse(ChatId, id)
+
   if (!parsed.success) throw new HTTPException(404, { message: 'Chat not found' })
+
   return parsed.output
 }

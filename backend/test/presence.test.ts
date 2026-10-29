@@ -10,12 +10,15 @@ const user = (uid: string) => env.USER.get(env.USER.idFromName(uid))
 async function connect(uid: string) {
   const ws = (await user(uid).fetch('http://do/', { headers: { Upgrade: 'websocket' } })).webSocket!
   ws.accept()
+
   return ws
 }
 
 it('pushes presence to watchers, and going away only after the grace period', async () => {
   const frames: ServerFrame[] = []
-  ;(await connect('watcher')).addEventListener('message', (e) => frames.push(JSON.parse(e.data as string)))
+  const watcher = await connect('watcher')
+  // SAFETY: UserDO sends text frames only.
+  watcher.addEventListener('message', (e) => frames.push(JSON.parse(e.data as string)))
   expect(await user('p').presence('watcher')).toEqual({ online: false, lastSeen: null })
 
   const p = await connect('p')

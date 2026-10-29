@@ -54,6 +54,7 @@ export default function GroupSettings({
     .sort(
       (a, b) => Number(b.id === uid) - Number(a.id === uid) || Number(b.role === 'admin') - Number(a.role === 'admin')
     )
+
   const me = members.find((m) => m.id === uid)
   const admin = me?.role === 'admin'
   // The only admin hands over before leaving, so a group with people in it always has an admin.
@@ -64,6 +65,7 @@ export default function GroupSettings({
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next)
+
         if (!next) {
           setView('main')
           change.reset()
@@ -230,11 +232,14 @@ function Identity({
 }) {
   const name = chat.group?.name ?? ''
   const [editing, setEditing] = useState<string | null>(null)
+
   const save = () => {
     const next = editing?.trim()
+
     if (next && next !== name) onRename(next)
     setEditing(null)
   }
+
   return (
     <div className="flex flex-col items-center gap-3 pt-1">
       <Avatar id={chat.id} name={name} className="size-[72px] rounded-full text-[28px]" />
@@ -248,6 +253,7 @@ function Identity({
           onBlur={save}
           onKeyDown={(e) => {
             if (e.key === 'Enter') save()
+
             if (e.key === 'Escape') {
               e.stopPropagation()
               setEditing(null)
@@ -284,6 +290,7 @@ function AddPeople({
   onAdd: (ids: string[]) => void
 }) {
   const [people, setPeople] = useState<Profile[]>([])
+
   return (
     <>
       <div className="flex items-center gap-2.5">
@@ -318,6 +325,7 @@ function Handover({
   onLeave: (successor: string) => void
 }) {
   const [successor, setSuccessor] = useState(others[0]?.id)
+
   return (
     <>
       <div className="flex flex-col gap-1.5">
@@ -326,7 +334,11 @@ function Handover({
           You're the only admin of {group}. Pick someone to take over before you leave.
         </DialogDescription>
       </div>
-      <RadioGroup value={successor} onValueChange={(v) => setSuccessor(v as string)} className="-mx-2 gap-0.5">
+      <RadioGroup
+        value={successor}
+        onValueChange={(v) => setSuccessor((s) => others.find((m) => m.id === v)?.id ?? s)}
+        className="-mx-2 gap-0.5"
+      >
         {others.map((m) => (
           <label
             key={m.id}

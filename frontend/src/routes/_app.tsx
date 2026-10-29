@@ -14,10 +14,13 @@ export const Route = createFileRoute('/_app')({
     // The remembered session renders the app at once; the server's answer arrives in the background.
     const session = await queryClient.query({ ...sessionQuery, staleTime: 'static' })
     void queryClient.query(sessionQuery).catch(() => {})
+
     if (!session) throw redirect({ to: '/login', search: { mode: 'signin' } })
+
     if (!session.user.username) throw redirect({ to: '/login/username' })
     openStore(session.user.id)
     await Promise.all([hydrateInbox(queryClient), queryClient.query({ ...outboxQuery, staleTime: 'static' })])
+
     return { user: session.user }
   },
   component: AppLayout,

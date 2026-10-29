@@ -12,8 +12,11 @@ import { sessionQuery } from '@/lib/session'
 export const Route = createFileRoute('/login/username')({
   beforeLoad: async ({ context }) => {
     const session = await context.queryClient.query({ ...sessionQuery, staleTime: 'static' })
+
     if (!session) throw redirect({ to: '/login', search: { mode: 'signin' } })
+
     if (session.user.username) throw redirect({ to: '/' })
+
     return { user: session.user }
   },
   component: ChooseUsername,
@@ -31,6 +34,7 @@ function ChooseUsername() {
     queryFn: () => unwrap(authClient.isUsernameAvailable({ username: debounced })),
     enabled: valid,
   })
+
   const available = valid && availability.data?.available
 
   const save = useMutation({
@@ -91,6 +95,7 @@ function ChooseUsername() {
 
 function Availability({ checking, valid, available }: { checking: boolean; valid: boolean; available?: boolean }) {
   if (checking || !valid) return null
+
   return available ? (
     <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-mint/15 px-2.5 py-1.5 text-[13px] font-semibold text-mint">
       <svg

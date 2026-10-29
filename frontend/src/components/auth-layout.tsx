@@ -55,6 +55,7 @@ export function AuthHeading({ title, subtitle }: { title: string; subtitle: stri
 
 export function FormError({ error }: { error: Error | null }) {
   if (!error) return null
+
   return (
     <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm font-medium text-danger">
       {error.message}

@@ -14,9 +14,10 @@ import {
   type ReadState,
   type Text,
 } from '../backend/src/protocol.ts'
-import { cursor, merge, withPending, type Pending } from '../frontend/src/lib/log.ts'
+import { cursor, merge, toReplay, withPending, type Pending } from '../frontend/src/lib/log.ts'
 
 const chat = 'c'
+
 const text = (seq: number, over: Partial<Text> = {}): Text => ({
   chat,
   seq,
@@ -33,6 +34,7 @@ const text = (seq: number, over: Partial<Text> = {}): Text => ({
   rev: seq,
   ...over,
 })
+
 const patch = (seq: number, target: number, state: Partial<Text>): Message => ({
   ...text(seq, { cid: `p${seq}`, ...state }),
   kind: 'patch',
@@ -41,6 +43,7 @@ const patch = (seq: number, target: number, state: Partial<Text>): Message => ({
 
 function permutations<T>(xs: T[]): T[][] {
   if (xs.length <= 1) return [xs]
+
   return xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest]))
 }
 
@@ -52,7 +55,9 @@ const stale = [
   patch(2, 1, { body: 'edited', edited: 2 }),
   patch(3, 1, { body: 'edited', edited: 2, reactions: { b: '👍' } }),
 ]
+
 const fresh = text(1, { body: 'edited', edited: 2, reactions: { b: '👍' }, rev: 3 })
+
 for (const order of [...permutations(stale), ...permutations([...stale, fresh])]) {
   const log = order.reduce<Message[]>((held, m) => merge(held, [m]), [])
   assert.deepEqual(
@@ -69,11 +74,14 @@ for (const order of [...permutations(stale), ...permutations([...stale, fresh])]
 // The inbox preview: a newer message replaces it, an edit to it updates it, and nothing older or repeated undoes that.
 const previewOf = (ms: Message[]) => ms.reduce(nextPreview, null)
 const edited = { seq: 1, kind: 'text', sender: 'a', body: 'edited', deleted: false, rev: 2 }
+
 assert.deepEqual(previewOf([text(1), patch(2, 1, { body: 'edited' })]), edited)
+
 assert.deepEqual(
   previewOf([text(1), patch(2, 1, { body: 'edited' }), text(1), patch(2, 1, { body: 'edited' })]),
   edited
 )
+
 assert.deepEqual(previewOf([text(1), text(3), patch(2, 1, { body: 'edited' })]), {
   seq: 3,
   kind: 'text',
@@ -86,6 +94,7 @@ assert.deepEqual(previewOf([text(1), text(3), patch(2, 1, { body: 'edited' })]),
 // Unsent changes stay on top of whatever the server confirms meanwhile: a delete still pending survives someone
 // else's reaction, and a later edit survives the ack of an earlier one.
 const uid = 'a'
+
 const outbox: Pending[] = [
   { t: 'delete', chat, cid: 'x1', seq: 1 },
   { t: 'edit', chat, cid: 'x2', seq: 4, body: 'second' },
@@ -97,12 +106,15 @@ const outbox: Pending[] = [
     local: { ...text(0, { cid: 'x3', body: 'new' }), seq: null },
   },
 ]
+
 const confirmed = merge(
   // Message 4 was just sent, so it is still inside the edit window.
   [text(1), text(4, { ts: Date.now() })],
   [patch(5, 1, { reactions: { b: '🔥' } }), patch(6, 4, { body: 'first', edited: 6 })]
 )
+
 const shown = withPending(chat, confirmed, outbox, uid)
+
 assert.deepEqual(
   shown.map((m) => [m.seq, m.deleted, m.body]),
   [
@@ -111,8 +123,24 @@ assert.deepEqual(
     [null, false, 'new'],
   ]
 )
+
 // Once acked, a send shows once: from the log, not again from the outbox.
 assert.equal(withPending(chat, [text(7, { cid: 'x3' })], outbox, uid).filter((m) => m.cid === 'x3').length, 1)
+
+// A reconnect replays what this tab holds even if IndexedDB never stored it, and what another tab left there, once
+// each and in write order. A frame the server refused stays unsent.
+const sending = (cid: string): Pending => ({
+  t: 'send',
+  chat,
+  cid,
+  body: cid,
+  local: { ...text(0, { cid }), seq: null },
+})
+
+assert.deepEqual(
+  toReplay([sending('01A'), sending('01C')], [{ ...sending('01C'), failed: true }, sending('01B')]).map((p) => p.cid),
+  ['01A', '01B']
+)
 
 // The cursor stops at the first gap: entries past it (live ones that beat the repair) don't move it.
 assert.equal(cursor([text(1), text(2), text(4)]), 2)
@@ -121,30 +149,43 @@ assert.equal(cursor([text(1), text(2), text(4)]), 2)
 // message you send means you've read everything before it.
 const readAfter = (ms: Message[], from: ReadState = { lastSeq: 0, readSeq: 0, unread: 0 }) =>
   ms.reduce((s, m) => nextRead(s, m, 'a'), from)
+
 const fromB = [text(1, { sender: 'b' }), text(2, { sender: 'b' })]
+
 assert.deepEqual(readAfter([...fromB, ...fromB, patch(3, 1, { body: 'x' })]), { lastSeq: 3, readSeq: 0, unread: 2 })
+
 assert.deepEqual(readAfter([...fromB, text(3), fromB[0]]), { lastSeq: 3, readSeq: 3, unread: 0 })
+
 // Read up to 1 already (a receipt beat the delivery): only 2 is unread.
 assert.equal(readAfter(fromB, { lastSeq: 0, readSeq: 1, unread: 0 }).unread, 1)
 
 // Edits close 15 minutes after sending; deletes and reactions don't.
 const edit = { t: 'edit', cid: 'e', chat, seq: 1, body: 'late' } as const
-assert.equal(typeof applyPatch(text(1), edit, 'a', 1 + EDIT_WINDOW_MS), 'object')
-assert.equal(typeof applyPatch(text(1), edit, 'a', 2 + EDIT_WINDOW_MS), 'string')
-assert.equal(typeof applyPatch(text(1), { ...edit, t: 'delete' }, 'a', 2 + EDIT_WINDOW_MS), 'object')
 
-// A group's name and your place in it follow its events: removal takes you out, being added back puts you in (with any rename you missed), and
-// someone else leaving changes nothing for you. Group events never count as unread.
+assert.equal('refused' in applyPatch(text(1), edit, 'a', 1 + EDIT_WINDOW_MS), false)
+
+assert.deepEqual(applyPatch(text(1), edit, 'a', 2 + EDIT_WINDOW_MS), {
+  refused: 'Messages can only be edited for 15 minutes',
+})
+
+assert.equal('refused' in applyPatch(text(1), { ...edit, t: 'delete' }, 'a', 2 + EDIT_WINDOW_MS), false)
+
+// A group's name and your place in it follow its events: removal takes you out, being added back puts you in (with
+// any rename you missed), and someone else leaving changes nothing for you. Group events never count as unread.
 const event = (seq: number, e: GroupEvent): Message => ({ ...text(seq, { body: JSON.stringify(e) }), kind: 'system' })
 const by = { id: 'b', name: 'Bo' }
 const me = { id: 'a', name: 'Al' }
+
 const events = [
   event(1, { t: 'created', by, name: 'Climbers' }),
   event(2, { t: 'renamed', by, name: 'Friday climbers' }),
   event(3, { t: 'removed', by, user: me }),
 ]
+
 const groupAfter = (ms: Message[]) => ms.reduce((s, m) => nextGroup(s, m, 'a'), { name: '', active: true })
+
 assert.deepEqual(groupAfter(events), { name: 'Friday climbers', active: false })
+
 assert.deepEqual(
   groupAfter([
     event(3, { t: 'removed', by, user: me }),
@@ -152,7 +193,9 @@ assert.deepEqual(
   ]),
   { name: 'Friday climbers', active: true }
 )
+
 assert.deepEqual(groupAfter([event(5, { t: 'left', by })]).active, true)
+
 assert.equal(readAfter(events).unread, 0)
 
 console.log('PASS: log rules')

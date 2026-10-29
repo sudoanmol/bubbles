@@ -6,5 +6,5 @@
   "trailingComma": "es5",
   "sortImports": true,
   "sortTailwindcss": { "stylesheet": "./frontend/src/styles.css", "functions": ["cn"] },
-  "ignorePatterns": ["dist", "routeTree.gen.ts", "worker-configuration.d.ts", "drizzle/meta"]
+  "ignorePatterns": ["dist", "routeTree.gen.ts", "worker-configuration.d.ts", "drizzle/meta", "tools/oxlint/anti-slop"]
 }

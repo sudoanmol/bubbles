@@ -11,10 +11,12 @@ const NewChatDialog = lazy(loadDialog)
 export function NewChat({ variant }: { variant: 'icon' | 'cta' }) {
   const [open, setOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
+
   const show = () => {
     setLoaded(true)
     setOpen(true)
   }
+
   const preload = () => void loadDialog()
 
   return (

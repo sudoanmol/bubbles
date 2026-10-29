@@ -7,6 +7,7 @@ const LAPSE_MS = 5_000
 let typing: Record<string, string[]> = {}
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const listeners = new Set<() => void>()
+
 // Dev only: a hot update would load a second copy of this module that the socket doesn't feed. Reload instead.
 import.meta.hot?.accept(() => location.reload())
 
@@ -25,6 +26,7 @@ export function startTyping(chat: string, uid: string) {
     setTimeout(() => stopTyping(chat, uid), LAPSE_MS)
   )
   const now = typing[chat] ?? []
+
   if (!now.includes(uid)) set(chat, [...now, uid])
 }
 
@@ -34,6 +36,7 @@ export function stopTyping(chat: string, uid: string) {
   clearTimeout(timers.get(key))
   timers.delete(key)
   const now = typing[chat]
+
   if (now?.includes(uid))
     set(
       chat,
@@ -46,6 +49,7 @@ export function useTyping() {
   return useSyncExternalStore(
     (l) => {
       listeners.add(l)
+
       return () => listeners.delete(l)
     },
     () => typing

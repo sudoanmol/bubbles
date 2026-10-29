@@ -20,12 +20,17 @@ import { migrate } from './schema'
  * timers once a minute.
  */
 const ALIVE_MS = 3 * PING_MS
+
 /** How long after the last device leaves before watchers are told: a reload must not flicker "online" off and on. */
 const GRACE_MS = 10_000
+
 /** How long a watch lasts; an open chat renews it every minute by asking for presence again. */
 const WATCH_MS = 150_000
 
-export type InboxRow = {
+/** A frame as it comes off a socket: JSON text. */
+const Frame = v.pipe(v.string(), v.parseJson(), ClientFrame)
+
+type InboxRow = {
   chat_id: string
   kind: 'dm' | 'group'
   /** The other person in a DM; empty for a group. */
@@ -78,7 +83,9 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     const wasOnline = this.presence().online
     this.ctx.acceptWebSocket(server)
     server.serializeAttachment({ since: Date.now() })
+
     if (!wasOnline) this.announce()
+
     return new Response(null, { status: 101, webSocket: client })
   }
 
@@ -88,6 +95,7 @@ export class UserDO extends DurableObject<CloudflareBindings> {
 
   webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
     this.queue = this.queue.then(() => this.handle(ws, data)).catch((error) => console.error(error))
+
     return this.queue
   }
 
@@ -95,26 +103,32 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     // Closed after a failure below: its later frames must not overtake the failed one, and come again on reconnect.
     if (ws.readyState !== WebSocket.OPEN) return
     let frame: ClientFrame
+
     try {
-      frame = v.parse(ClientFrame, JSON.parse(data as string))
+      frame = v.parse(Frame, data)
     } catch {
       return send(ws, { t: 'error', message: 'Invalid frame' })
     }
+
     if (frame.t === 'read') return this.read(frame.chat, frame.seq)
+
     // Not awaited: typing is best effort and must not hold up the frames behind it.
     if (frame.t === 'typing')
       return void this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat))
         .typing(this.uid)
         .catch((error) => console.error('Typing failed', error))
     let result: Message | { refused: string }
+
     try {
       result = await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
     } catch (error) {
       // The chat was unreachable, or whether the write landed is unknown. Not a refusal: the client reconnects and
       // replays its outbox in order with the same cids, and the chat dedupes anything that did land.
       console.error(error)
+
       return ws.close(1011, 'Try again')
     }
+
     send(ws, 'refused' in result ? { t: 'error', cid: frame.cid, message: result.refused } : { t: 'ack', msg: result })
   }
 
@@ -125,6 +139,7 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   async read(chat: string, seq: number) {
     try {
       const state = await this.env.CHAT.get(this.env.CHAT.idFromName(chat)).markRead(this.uid, seq)
+
       if (!state) return
       this.sql.exec(
         'UPDATE chat SET read_seq = ?, unread = ? WHERE chat_id = ? AND read_seq <= ?',
@@ -147,6 +162,7 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   /** The last socket to close sets when the user was last seen; watchers hear about it once the grace period ends. */
   webSocketClose() {
     this.ctx.storage.kv.put('lastSeen', Date.now())
+
     if (!this.alive().length) void this.ctx.storage.setAlarm(Date.now() + GRACE_MS)
   }
 
@@ -157,9 +173,12 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   /** Open sockets that pinged (or connected) recently. A phone that lost signal stops pinging and drops out. */
   alive() {
     const now = Date.now()
+
     return this.ctx.getWebSockets().filter((ws) => {
+      // SAFETY: the only attachment a socket gets is the `{ since }` set when it is accepted.
       const since = (ws.deserializeAttachment() as { since: number } | null)?.since ?? 0
       const ping = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0
+
       return ws.readyState === WebSocket.OPEN && now - Math.max(since, ping) < ALIVE_MS
     })
   }
@@ -171,8 +190,10 @@ export class UserDO extends DurableObject<CloudflareBindings> {
    */
   presence(watcher?: string): Presence {
     const now = Date.now()
+
     if (watcher) this.sql.exec('INSERT OR REPLACE INTO watcher (user_id, until) VALUES (?, ?)', watcher, now + WATCH_MS)
     const lastSeen = this.ctx.storage.kv.get<number>('lastSeen') ?? null
+
     return { online: this.alive().length > 0 || (lastSeen !== null && now - lastSeen < GRACE_MS), lastSeen }
   }
 
@@ -180,6 +201,7 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   announce() {
     this.sql.exec('DELETE FROM watcher WHERE until < ?', Date.now())
     const frame = { t: 'presence', uid: this.uid, ...this.presence() } as const
+
     for (const { user_id } of this.sql.exec<{ user_id: string }>('SELECT user_id FROM watcher'))
       void this.env.USER.get(this.env.USER.idFromName(user_id))
         .push(frame)
@@ -214,7 +236,9 @@ export class UserDO extends DurableObject<CloudflareBindings> {
         group.active ? 1 : 0
       )
     }
+
     const frames = entries.map((msg) => JSON.stringify({ t: 'msg', msg } satisfies ServerFrame))
+
     for (const ws of this.ctx.getWebSockets()) for (const frame of frames) ws.send(frame)
   }
 

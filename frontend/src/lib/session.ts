@@ -21,6 +21,8 @@ function remember(session: Session | null) {
 function remembered(): Session | undefined {
   try {
     const raw = localStorage.getItem(KEY)
+
+    // SAFETY: only remember() writes this key, with a session the server sent.
     return raw ? (JSON.parse(raw) as Session) : undefined
   } catch {
     return undefined
@@ -31,9 +33,12 @@ export const sessionQuery = queryOptions({
   queryKey: ['session'],
   queryFn: async () => {
     const res = await fetch('/api/auth/get-session')
+
     if (!res.ok) throw new Error('Could not load your session')
+    // SAFETY: Better Auth's get-session answers with the signed-in session, or null.
     const session = (await res.json()) as Session | null
     remember(session)
+
     return session
   },
   // Stale from the start, so it is checked against the server in the background.
@@ -48,6 +53,7 @@ export async function signOut() {
     headers: { 'content-type': 'application/json' },
     body: '{}',
   })
+
   if (!res.ok) throw new Error('Could not sign out')
   remember(null)
 }

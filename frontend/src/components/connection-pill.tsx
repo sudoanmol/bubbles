@@ -8,6 +8,7 @@ import { useStorageFailed } from '@/lib/store'
 export function ConnectionPill() {
   const connection = useConnection()
   const storageFailed = useStorageFailed()
+
   // The connection comes first: offline or reconnecting is what explains a message not going out right now.
   if (connection === 'online' && storageFailed)
     return (
@@ -20,8 +21,10 @@ export function ConnectionPill() {
         </output>
       </div>
     )
+
   if (connection === 'online') return null
   const offline = connection === 'offline'
+
   return (
     <div className="pointer-events-none absolute inset-x-0 -top-3 flex -translate-y-full justify-center px-4">
       <output

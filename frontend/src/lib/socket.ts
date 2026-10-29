@@ -24,25 +24,30 @@ import {
   outboxQuery,
   upsertMessages,
 } from './api'
-import { cursor, type LocalMessage, type Pending } from './log'
+import { cursor, toReplay, type LocalMessage, type Pending } from './log'
 import { allOutbox, currentUid, deleteOutbox, saveMessages, saveOutbox } from './store'
 import { startTyping, stopTyping } from './typing'
 
 let socket: WebSocket | null = null
+
 // Dev only: a hot update would load a second copy of this module, with no socket and stuck on "connecting", while the
 // first keeps the real one. Reload the page instead.
 import.meta.hot?.accept(() => location.reload())
+
 // Monotonic so two messages written in the same millisecond still sort, and replay, in the order they were written.
 const ulid = monotonicFactory()
+
 // Outbox writes and sends run one at a time, in the order they were made: a frame goes out only once it is in
 // IndexedDB, so a reload can't lose it, and never ahead of an older unsent one (the replay on connect included).
-let outbound: Promise<unknown> = Promise.resolve()
-const queue = (work: () => Promise<unknown> | void) => {
+let outbound: Promise<void> = Promise.resolve()
+
+const queue = (work: () => Promise<void>) => {
   outbound = outbound.then(work).catch((error) => console.error(error))
 }
 
 /** `connecting` covers the first connect and every reconnect; `offline` is when the browser says there's no network. */
 export type Connection = 'online' | 'connecting' | 'offline'
+
 let connection: Connection = 'connecting'
 const listeners = new Set<() => void>()
 
@@ -56,6 +61,7 @@ export function useConnection() {
   return useSyncExternalStore(
     (l) => {
       listeners.add(l)
+
       return () => listeners.delete(l)
     },
     () => connection
@@ -76,6 +82,7 @@ function enqueue(queryClient: QueryClient, p: Pending, andSend = true) {
   )
   queue(async () => {
     await saveOutbox(p)
+
     if (andSend && socket?.readyState === WebSocket.OPEN) socket.send(frame(p))
   })
 }
@@ -88,9 +95,11 @@ function dequeue(queryClient: QueryClient, cid: string) {
 /** Opens the device's single socket (held by the user's UserDO) and feeds frames into the cache and the store. */
 export function connect(queryClient: QueryClient) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`)
+
   // Derived from the facts on every event, since the socket and the browser's online/offline events race.
   const sync = () =>
     setConnection(!navigator.onLine ? 'offline' : ws.readyState === WebSocket.OPEN ? 'online' : 'connecting')
+
   for (const e of ['online', 'offline'] as const) window.addEventListener(e, sync)
   ws.addEventListener('close', sync)
 
@@ -98,8 +107,10 @@ export function connect(queryClient: QueryClient) {
   // unanswered at the next beat means the connection died without closing (a network switch, a sleeping laptop), so
   // reconnect now instead of waiting minutes for the OS to notice.
   let answered = true
+
   const beat = setInterval(() => {
     if (ws.readyState !== WebSocket.OPEN) return
+
     if (!answered) return ws.reconnect()
     answered = false
     ws.send('ping')
@@ -113,7 +124,10 @@ export function connect(queryClient: QueryClient) {
     // Anything unsent, from this session or an earlier one, goes again in the order it was written, except what the
     // server refused, which waits for Retry. Resending what the server already has is harmless: it dedupes on `cid`.
     queue(async () => {
-      for (const p of await allOutbox()) if (!p.failed) ws.send(frame(p))
+      const stored = await allOutbox()
+      const held = queryClient.getQueryData<Pending[]>(outboxQuery.queryKey) ?? []
+
+      for (const p of toReplay(stored, held)) ws.send(frame(p))
     })
     // Catch up on whatever was written while connecting or away, the first connect included: the inbox, and every
     // chat on screen, with its members' reads and presence. Chats not on screen sync when opened.
@@ -125,8 +139,10 @@ export function connect(queryClient: QueryClient) {
   ws.addEventListener('message', (event) => {
     if (event.data === 'pong') return void (answered = true)
     const parsed = v.safeParse(ServerFrame, JSON.parse(event.data))
+
     if (!parsed.success) return
     const f = parsed.output
+
     switch (f.t) {
       case 'ack':
       case 'msg':
@@ -148,6 +164,7 @@ export function connect(queryClient: QueryClient) {
   })
 
   socket = ws
+
   return () => {
     for (const e of ['online', 'offline'] as const) window.removeEventListener(e, sync)
     clearInterval(beat)
@@ -163,13 +180,17 @@ function receive(queryClient: QueryClient, msg: Message) {
   // Stored, so no longer pending; this socket's own copy can beat the ack. saveMessages clears it from IndexedDB.
   setOutbox(queryClient, (outbox) => outbox.filter((p) => p.cid !== msg.cid))
   void saveMessages(msg.chat, [msg])
+
   // Their message replaces the dots.
   if (msg.kind === 'text') stopTyping(msg.chat, msg.sender)
+
   // A group event changes who's in the chat, their roles or its name.
   if (msg.kind === 'system') void queryClient.invalidateQueries({ queryKey: chatQuery(msg.chat).queryKey })
   // A message past a gap shows right away; the gap is fetched now if the chat is on screen, or when it next opens.
   const hi = held && cursor(held)
+
   if (hi !== undefined && msg.seq > hi + 1) void queryClient.invalidateQueries({ queryKey })
+
   if (!bumpInbox(queryClient, msg, currentUid()!)) void queryClient.invalidateQueries({ queryKey: inboxQuery.queryKey })
 }
 
@@ -183,6 +204,7 @@ const readSent = new Map<string, number>()
 export function markRead(queryClient: QueryClient, chat: string, seq: number) {
   clearUnread(queryClient, chat)
   const item = queryClient.getQueryData<InboxItem[]>(inboxQuery.queryKey)?.find((i) => i.chatId === chat)
+
   if ((item && item.readSeq >= seq) || socket?.readyState !== WebSocket.OPEN || (readSent.get(chat) ?? 0) >= seq) return
   readSent.set(chat, seq)
   socket.send(JSON.stringify({ t: 'read', chat, seq } satisfies ClientFrame))
@@ -195,6 +217,7 @@ const typedAt = new Map<string, number>()
 /** Tells the chat you're typing, at most every 3 s. Ephemeral: dropped while offline, never in the outbox. */
 export function sendTyping(chat: string) {
   const now = Date.now()
+
   if (socket?.readyState !== WebSocket.OPEN || now - (typedAt.get(chat) ?? 0) < TYPING_EVERY_MS) return
   typedAt.set(chat, now)
   socket.send(JSON.stringify({ t: 'typing', chat } satisfies ClientFrame))
@@ -212,6 +235,7 @@ export function sendMessage(
   // The message ends this round of typing; the next keystroke announces the next one at once.
   typedAt.delete(chat)
   const reply = replyTo?.seq ? { seq: replyTo.seq, sender: replyTo.sender, body: replyTo.body.slice(0, 200) } : null
+
   const local: LocalMessage = {
     chat,
     cid,
@@ -227,6 +251,7 @@ export function sendMessage(
     reactions: {},
     rev: 0,
   }
+
   enqueue(queryClient, { t: 'send', chat, cid, body, reply: reply?.seq, local })
 }
 
@@ -239,7 +264,8 @@ export function patchMessage(
 ) {
   if (target.seq === null) return
   const pending: Patch = { ...change, cid: ulid(), chat: target.chat, seq: target.seq }
-  if (typeof applyPatch(target, pending, uid, Date.now()) === 'string') return
+
+  if ('refused' in applyPatch(target, pending, uid, Date.now())) return
   enqueue(queryClient, pending)
 }
 
@@ -249,6 +275,7 @@ const pendingFor = (queryClient: QueryClient, cid: string) =>
 /** Sends a message the server refused once more. */
 export function retryMessage(queryClient: QueryClient, message: LocalMessage) {
   const pending = pendingFor(queryClient, message.cid)
+
   if (pending) enqueue(queryClient, { ...pending, failed: false })
 }
 
@@ -263,6 +290,7 @@ export function discardMessage(queryClient: QueryClient, message: LocalMessage) 
  */
 function refused(queryClient: QueryClient, cid: string) {
   const pending = pendingFor(queryClient, cid)
+
   if (pending?.t === 'send') enqueue(queryClient, { ...pending, failed: true }, false)
   else if (pending) dequeue(queryClient, cid)
 }

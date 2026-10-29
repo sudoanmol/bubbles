@@ -34,6 +34,7 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
   })
 
   const query = search.trim().toLowerCase()
+
   const items = (inbox.data ?? []).filter(
     (i) =>
       !query ||
@@ -136,9 +137,13 @@ const title = (item: InboxItem) => (item.kind === 'dm' ? item.peer.name : item.n
 /** The line under a chat's name: its newest message or group event, and who it's from. */
 function preview(item: InboxItem, uid: string) {
   const p = item.preview
+
   if (!p) return item.kind === 'dm' ? `@${item.peer.username}` : ''
+
   if (p.kind === 'system') return describeText(p.body, uid)
   const from = p.sender === uid ? 'You' : firstName(item.kind === 'dm' ? item.peer.name : (p.name ?? 'Someone'))
+
   if (p.deleted) return `${from} deleted a message`
+
   return item.kind === 'group' || p.sender === uid ? `${from}: ${p.body}` : p.body
 }
