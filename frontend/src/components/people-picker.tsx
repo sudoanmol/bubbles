@@ -55,7 +55,7 @@ export function PeoplePicker({
       <ComboboxChips aria-label={value.length ? 'Picked people' : undefined}>
         {value.map((p) => (
           <ComboboxChip key={p.id} aria-label={p.name}>
-            <Avatar id={p.id} name={p.name} className="size-6 rounded-full text-[10px]" />
+            <Avatar id={p.id} image={p.image} className="size-6" />
             {firstName(p.name)}
           </ComboboxChip>
         ))}
@@ -70,7 +70,7 @@ export function PeoplePicker({
         <ComboboxList aria-label="People" className="max-h-72 p-0">
           {(p: Profile) => (
             <ComboboxItem key={p.id} value={p}>
-              <Avatar id={p.id} name={p.name} className="size-10 rounded-full text-base" />
+              <Avatar id={p.id} image={p.image} className="size-10" />
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-[15px] leading-[18px] font-semibold">{p.name}</span>
                 <span className="truncate text-sm leading-[18px] text-muted-foreground">@{p.username}</span>

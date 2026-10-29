@@ -26,8 +26,8 @@ export function openStore(uid: string) {
   if (current?.uid === uid) return
   current = {
     uid,
-    db: openDB<Schema>(`bubbles-${uid}`, 4, {
-      upgrade(db, from, _to, tx) {
+    db: openDB<Schema>(`bubbles-${uid}`, 5, {
+      async upgrade(db, from, _to, tx) {
         // Before version 2 the local copy is started over; it is only a cache of the server.
         if (from < 2) {
           for (const name of db.objectStoreNames) db.deleteObjectStore(name)
@@ -37,10 +37,16 @@ export function openStore(uid: string) {
           db.createObjectStore('chats', { keyPath: 'id' })
         }
 
-        // 3: the inbox and chats gained read state; 4: groups. Refetched; the outbox (unsent messages) is kept.
-        if (from === 2 || from === 3) {
+        // 3: the inbox and chats gained read state; 4: groups; 5: photos and link cards. Refetched; the outbox
+        // (unsent messages) is kept, its messages given no photos or card.
+        if (from >= 2 && from <= 4) {
           void tx.objectStore('inbox').clear()
           void tx.objectStore('chats').clear()
+          void tx.objectStore('messages').clear()
+
+          for await (const cursor of tx.objectStore('outbox'))
+            if (cursor.value.t === 'send')
+              void cursor.update({ ...cursor.value, local: { ...cursor.value.local, images: [], link: null } })
         }
       },
       // Another tab is deleting this database (sign out) or upgrading it: let go, so it isn't left waiting.

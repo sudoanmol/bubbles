@@ -1,30 +1,18 @@
+import Beam from 'boring-avatars'
 import { cn } from 'cn'
 
-const colors = ['bg-gum text-ink', 'bg-cobalt text-paper', 'bg-sun text-ink', 'bg-mint text-paper']
+// Our palette: sun, gum, cobalt, mint, ink (Paper: "Default avatars").
+const colors = ['#FFD43B', '#FF7EB6', '#2E5BFF', '#1FAE6B', '#121212']
 
-/** Initials on a color picked from the user's id, so a person keeps their color everywhere. */
-export function Avatar({ id, name, className }: { id: string; name: string; className?: string }) {
-  let hash = 0
-
-  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) | 0
-
-  const initials = name
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-
+/** Their photo, or a face drawn from their id (a group's id for a group), so it never changes when they rename. */
+export function Avatar({ id, image, className }: { id: string; image?: string | null; className?: string }) {
   return (
-    <div
-      aria-hidden="true"
-      className={cn(
-        'flex size-11 shrink-0 items-center justify-center rounded-bubble font-display text-lg font-extrabold',
-        colors[Math.abs(hash) % colors.length],
-        className
+    <div aria-hidden="true" className={cn('size-11 shrink-0 overflow-hidden rounded-full', className)}>
+      {image ? (
+        <img src={image} alt="" className="size-full object-cover" />
+      ) : (
+        <Beam name={id} variant="beam" colors={colors} size="100%" title={false} />
       )}
-    >
-      {initials}
     </div>
   )
 }

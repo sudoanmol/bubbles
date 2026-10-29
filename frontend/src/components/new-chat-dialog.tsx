@@ -99,7 +99,7 @@ function NewDm({ onGroup, onOpened }: { onGroup: () => void; onOpened: (chat: { 
               onClick={onGroup}
               className="flex items-center gap-3 rounded-[14px] p-2 text-left transition-colors hover:bg-wash"
             >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-ink bg-sun shadow-[2px_2px_0_var(--color-ink)]">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-ink bg-sun text-black shadow-[2px_2px_0_var(--color-ink)]">
                 <UsersIcon className="size-[18px]" strokeWidth={2.5} />
               </span>
               <span className="flex flex-col">
@@ -115,7 +115,7 @@ function NewDm({ onGroup, onOpened }: { onGroup: () => void; onOpened: (chat: { 
                 value={p}
                 className={cn('pr-2 after:hidden', start.isPending && start.variables === p.username && 'opacity-60')}
               >
-                <Avatar id={p.id} name={p.name} className="size-10 rounded-full text-base" />
+                <Avatar id={p.id} image={p.image} className="size-10" />
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-[15px] leading-[18px] font-semibold">{p.name}</span>
                   <span className="truncate text-sm leading-[18px] text-muted-foreground">@{p.username}</span>

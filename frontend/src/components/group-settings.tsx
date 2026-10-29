@@ -116,7 +116,7 @@ export default function GroupSettings({
               )}
               {members.map((m) => (
                 <div key={m.id} className="flex items-center gap-3 rounded-[14px] p-2">
-                  <Avatar id={m.id} name={m.name} className="size-10 rounded-full text-base" />
+                  <Avatar id={m.id} image={m.image} className="size-10" />
                   <div className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate text-[15px] leading-[18px] font-semibold">
                       {m.name} {m.id === uid && <span className="font-normal text-muted-foreground">(you)</span>}
@@ -124,7 +124,7 @@ export default function GroupSettings({
                     <span className="truncate text-sm leading-[18px] text-muted-foreground">@{m.username}</span>
                   </div>
                   {m.role === 'admin' && (
-                    <span className="rounded-full border-[1.5px] border-ink bg-sun px-[9px] py-0.5 text-xs font-bold">
+                    <span className="rounded-full border-[1.5px] border-ink bg-sun px-[9px] py-0.5 text-xs font-bold text-black">
                       Admin
                     </span>
                   )}
@@ -242,7 +242,7 @@ function Identity({
 
   return (
     <div className="flex flex-col items-center gap-3 pt-1">
-      <Avatar id={chat.id} name={name} className="size-[72px] rounded-full text-[28px]" />
+      <Avatar id={chat.id} className="size-[72px]" />
       {editing !== null ? (
         <Input
           aria-label="Group name"
@@ -344,7 +344,7 @@ function Handover({
             key={m.id}
             className="flex cursor-pointer items-center gap-3 rounded-[14px] p-2 transition-colors has-data-checked:bg-wash"
           >
-            <Avatar id={m.id} name={m.name} className="size-10 rounded-full text-base" />
+            <Avatar id={m.id} image={m.image} className="size-10" />
             <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">{m.name}</span>
             <RadioGroupItem value={m.id} className="mr-1" />
           </label>

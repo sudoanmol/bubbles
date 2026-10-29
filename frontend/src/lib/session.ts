@@ -2,7 +2,14 @@ import { queryOptions } from '@tanstack/react-query'
 
 // Signed-in pages talk to Better Auth's endpoints directly; its full client only loads on /login (lib/auth).
 export type Session = {
-  user: { id: string; name: string; email: string; username?: string | null; displayUsername?: string | null }
+  user: {
+    id: string
+    name: string
+    email: string
+    image?: string | null
+    username?: string | null
+    displayUsername?: string | null
+  }
 }
 
 // The last known session, so a reload renders the app from the local copy without waiting for the network.

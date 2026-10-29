@@ -27,11 +27,7 @@ export function ChatHeader({ chat, uid }: { chat: Chat; uid: string }) {
       <Link to="/" aria-label="Back to chats" className="-ml-1 rounded-lg p-1 md:hidden">
         <ArrowLeftIcon className="size-5" />
       </Link>
-      <Avatar
-        id={chat.group ? chat.id : peer.id}
-        name={chat.group?.name ?? peer.name}
-        className="size-10 rounded-full text-base"
-      />
+      <Avatar id={chat.group ? chat.id : peer.id} image={chat.group ? null : peer.image} className="size-10" />
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate leading-5 font-semibold">{chat.group?.name ?? peer.name}</span>
         {chat.group ? (

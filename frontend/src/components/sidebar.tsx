@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { InboxItem } from 'backend/protocol'
 import { cn } from 'cn'
-import { SearchIcon } from 'lucide-react'
-import { useState } from 'react'
+import { MonitorIcon, MoonIcon, SearchIcon, SunIcon } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import { lazy, Suspense, useState } from 'react'
 
 import { Avatar } from '@/components/avatar'
 import { Logo } from '@/components/logo'
@@ -79,7 +80,7 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
             {/* A group you're no longer in fades (Paper: "Groups: receipts, leaving, deleting"). */}
             <Avatar
               id={item.kind === 'dm' ? item.peer.id : item.chatId}
-              name={title(item)}
+              image={item.kind === 'dm' ? item.peer.image : null}
               className={cn(item.kind === 'group' && !item.active && 'opacity-45')}
             />
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -104,7 +105,7 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
               {item.unread > 0 && (
                 <span
                   aria-label={`${item.unread} unread`}
-                  className="flex h-[22px] min-w-[22px] items-center justify-center rounded-full border-[1.5px] border-ink bg-sun px-[7px] text-xs leading-4 font-bold text-ink group-data-[status=active]:hidden"
+                  className="flex h-[22px] min-w-[22px] items-center justify-center rounded-full border-[1.5px] border-ink bg-sun px-[7px] text-xs leading-4 font-bold text-black group-data-[status=active]:hidden"
                 >
                   {item.unread > 99 ? '99+' : item.unread}
                 </span>
@@ -115,11 +116,8 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
       </nav>
 
       <div className="flex items-center gap-3 border-t border-line px-2.5 py-3">
-        <Avatar id={user.id} name={user.name} className="size-9 rounded-full text-[15px]" />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-semibold">{user.name}</span>
-          <span className="truncate text-[13px] text-muted-foreground">@{user.displayUsername ?? user.username}</span>
-        </div>
+        <ProfileButton user={user} />
+        <ThemeButton />
         <button
           onClick={() => signOut.mutate()}
           disabled={signOut.isPending}
@@ -129,6 +127,71 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
         </button>
       </div>
     </aside>
+  )
+}
+
+// The dialog pulls in the auth client and Base UI's Menu, so it loads on first hover or focus.
+const loadProfile = () => import('@/components/profile-dialog')
+const ProfileDialog = lazy(loadProfile)
+
+/** You, at the bottom of the sidebar: the whole row opens your profile (Paper: "Profile"). */
+function ProfileButton({ user }: { user: Session['user'] }) {
+  const [open, setOpen] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Edit profile"
+        onPointerEnter={() => void loadProfile()}
+        onFocus={() => void loadProfile()}
+        onClick={() => {
+          setLoaded(true)
+          setOpen(true)
+        }}
+        className="group/profile -m-1.5 flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1.5 text-left transition-colors hover:bg-wash"
+      >
+        <Avatar id={user.id} image={user.image} className="size-9" />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm leading-[18px] font-semibold">{user.name}</span>
+          <span className="truncate text-[13px] leading-4 text-muted-foreground group-hover/profile:hidden">
+            @{user.displayUsername ?? user.username}
+          </span>
+          <span className="hidden text-[13px] leading-4 text-muted-foreground group-hover/profile:block">
+            Edit profile
+          </span>
+        </span>
+      </button>
+      {loaded && (
+        <Suspense>
+          <ProfileDialog user={user} open={open} onOpenChange={setOpen} />
+        </Suspense>
+      )}
+    </>
+  )
+}
+
+const themes = {
+  system: { next: 'light', label: 'Theme: same as device', Icon: MonitorIcon },
+  light: { next: 'dark', label: 'Theme: light', Icon: SunIcon },
+  dark: { next: 'system', label: 'Theme: dark', Icon: MoonIcon },
+} as const
+
+/** Cycles device → light → dark. */
+function ThemeButton() {
+  const { theme, setTheme } = useTheme()
+  const { next, label, Icon } = theme === 'light' || theme === 'dark' ? themes[theme] : themes.system
+
+  return (
+    <button
+      onClick={() => setTheme(next)}
+      aria-label={label}
+      title={label}
+      className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-wash hover:text-ink"
+    >
+      <Icon className="size-4" strokeWidth={2.5} aria-hidden="true" />
+    </button>
   )
 }
 

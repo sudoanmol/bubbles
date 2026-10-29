@@ -24,7 +24,7 @@ export default function ReadByPopover({
         </span>
         {readers.map((r) => (
           <div key={r.id} className="flex items-center gap-2.5">
-            <Avatar id={r.id} name={r.name} className="size-7 rounded-full text-xs" />
+            <Avatar id={r.id} image={r.image} className="size-7" />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold">{r.name}</span>
             <span className="text-xs text-muted-foreground">{formatShort(r.ts)}</span>
           </div>

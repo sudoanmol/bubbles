@@ -16,6 +16,8 @@
       "migrations_dir": "drizzle",
     },
   ],
+  // Photos (<uploader id>/<ulid>) and link cards (unfurl/<sha256 of the URL>).
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "bubbles-chat" }],
   "durable_objects": {
     "bindings": [
       { "name": "USER", "class_name": "UserDO" },

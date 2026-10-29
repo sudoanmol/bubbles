@@ -134,7 +134,14 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     let result: Message | { refused: string }
 
     try {
-      result = await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
+      // Photos must be this user's own, and uploaded: the client sends a message only once its photos are up.
+      const photos = frame.t === 'send' ? (frame.images ?? []) : []
+
+      const found = await Promise.all(photos.map((p) => p.key.startsWith(`${this.uid}/`) && this.env.MEDIA.head(p.key)))
+
+      result = found.every(Boolean)
+        ? await this.env.CHAT.get(this.env.CHAT.idFromName(frame.chat)).write(this.uid, frame)
+        : { refused: "A photo didn't upload" }
     } catch (error) {
       // The chat was unreachable, or whether the write landed is unknown. Not a refusal: the client reconnects and
       // replays its outbox in order with the same cids, and the chat dedupes anything that did land.

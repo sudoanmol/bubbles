@@ -16,12 +16,12 @@ const buttonVariants = cva(
         // White sticker with an ink outline.
         sticker: `border-2 border-ink bg-paper text-ink shadow-sticker ${press}`,
         // Sun sticker for small icon actions (new chat, send).
-        sun: `border-2 border-ink bg-sun text-ink shadow-[2px_2px_0_var(--color-ink)] ${press}`,
+        sun: `border-2 border-ink bg-sun text-black shadow-[2px_2px_0_var(--color-ink)] ${press}`,
         ghost: 'text-muted-foreground hover:bg-wash hover:text-ink',
         // Quiet secondary actions (Cancel, Leave group): a hairline border.
         outline: 'border-[1.5px] border-line bg-paper text-ink transition-colors hover:bg-wash',
         // The destructive step of a confirmation.
-        danger: 'bg-danger text-paper font-bold transition-[filter] hover:brightness-95',
+        danger: 'bg-danger text-white font-bold transition-[filter] hover:brightness-95',
       },
       size: {
         default: 'h-14 rounded-[14px] px-5 text-base',

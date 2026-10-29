@@ -8,6 +8,7 @@ import { chats } from './routes/chats'
 import { dev } from './routes/dev'
 import { dms } from './routes/dms'
 import { inbox } from './routes/inbox'
+import { media } from './routes/media'
 import { users } from './routes/users'
 import { ws } from './routes/ws'
 
@@ -50,6 +51,8 @@ app.route('/dms', dms)
 app.route('/chats', chats)
 
 app.route('/users', users)
+
+app.route('/media', media)
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ message: err.message }, err.status)

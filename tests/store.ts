@@ -32,6 +32,8 @@ const text = (seq: number, rev = seq, cid = `t${seq}`): Text => ({
   edited: null,
   deleted: false,
   reactions: {},
+  images: [],
+  link: null,
   rev,
 })
 

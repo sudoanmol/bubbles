@@ -13,7 +13,7 @@ function Home() {
         <div className="-rotate-4 rounded-[22px_22px_22px_6px] border-2 border-ink bg-paper px-[18px] py-3 font-medium shadow-sticker">
           hello?
         </div>
-        <div className="rotate-3 rounded-[22px_22px_6px_22px] border-2 border-ink bg-sun px-[18px] py-3 font-medium shadow-sticker">
+        <div className="rotate-3 rounded-[22px_22px_6px_22px] border-2 border-ink bg-sun px-[18px] py-3 font-medium text-black shadow-sticker">
           is this thing on?
         </div>
       </div>

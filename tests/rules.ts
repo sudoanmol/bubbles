@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import {
   applyPatch,
   EDIT_WINDOW_MS,
+  findLinks,
   nextGroup,
   nextPreview,
   nextRead,
@@ -31,6 +32,8 @@ const text = (seq: number, over: Partial<Text> = {}): Text => ({
   edited: null,
   deleted: false,
   reactions: {},
+  images: [],
+  link: null,
   rev: seq,
   ...over,
 })
@@ -197,5 +200,37 @@ assert.deepEqual(
 assert.deepEqual(groupAfter([event(5, { t: 'left', by })]).active, true)
 
 assert.equal(readAfter(events).unread, 0)
+
+// Links: trailing punctuation stays out of the URL, and bare www. links open over https.
+assert.deepEqual(
+  findLinks('see https://x.com/a, then www.y.org/b.').map((l) => l.href),
+  ['https://x.com/a', 'https://www.y.org/b']
+)
+
+// A message's card follows its text: an edit that changes the first link drops it (the server unfurls the new one),
+// one that keeps it keeps it. Deleting drops the photos and the card.
+const card = { url: 'https://x.com', site: 'x.com', title: 'X', description: null, image: null }
+const linked = text(1, { body: 'https://x.com', link: card, images: [{ key: 'a/1', w: 1, h: 1 }] })
+
+const stateAfter = (p: Parameters<typeof applyPatch>[1]) => {
+  const next = applyPatch(linked, p, 'a', 2)
+  assert.ok(!('refused' in next))
+
+  return next
+}
+
+assert.equal(stateAfter({ ...edit, body: 'https://x.com wow' }).link, card)
+
+assert.equal(stateAfter({ ...edit, body: 'https://z.com' }).link, null)
+
+const gone = stateAfter({ ...edit, t: 'delete' })
+
+assert.deepEqual([gone.images, gone.link], [[], null])
+
+// The card arrives as a patch after the message; folding it in keeps it, whichever copy arrived first.
+const carded = patch(2, 1, { body: 'https://x.com', link: card })
+
+for (const order of permutations([text(1, { body: 'https://x.com' }), carded]))
+  assert.equal(order.reduce<Message[]>((log, m) => merge(log, [m]), [])[0].link, card)
 
 console.log('PASS: log rules')

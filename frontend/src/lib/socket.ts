@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import {
   applyPatch,
   PING_MS,
+  previewText,
   ServerFrame,
   type ClientFrame,
   type InboxItem,
@@ -27,6 +28,7 @@ import {
 import { cursor, toReplay, type LocalMessage, type Pending } from './log'
 import { allOutbox, currentUid, deleteOutbox, saveMessages, saveOutbox } from './store'
 import { startTyping, stopTyping } from './typing'
+import { upload, UploadRefused, type Upload } from './upload'
 
 let socket: WebSocket | null = null
 
@@ -70,7 +72,34 @@ export function useConnection() {
 
 /** The wire frame of an outbox entry, without the local-only fields. */
 const frame = (p: Pending) =>
-  JSON.stringify(p, (key, value) => (key === 'failed' || key === 'local' ? undefined : value))
+  JSON.stringify(p, (key, value) => (key === 'failed' || key === 'local' || key === 'files' ? undefined : value))
+
+// Upload failures in a row, which set how long the socket stays closed before it reconnects.
+let uploadFailures = 0
+let reopen: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Sends an outbox entry once its photos are up (usually already, as they upload when picked). A photo the server
+ * won't take marks the message not sent. Any other upload failure closes the socket, like a failed write on the
+ * server, so nothing written after this message overtakes it. It reopens after a pause that doubles while uploads keep
+ * failing (`reconnect()` alone would retry at once, photo and all, in a loop), and the outbox then replays in order.
+ */
+async function transmit(queryClient: QueryClient, ws: WebSocket, p: Pending) {
+  try {
+    if (p.t === 'send' && p.files?.length) {
+      await Promise.all(p.files.map(upload))
+      uploadFailures = 0
+    }
+  } catch (error) {
+    if (error instanceof UploadRefused) return refused(queryClient, p.cid)
+    ws.close()
+    reopen = setTimeout(() => ws.reconnect(), Math.min(2_000 * 2 ** uploadFailures++, 60_000))
+
+    return
+  }
+
+  if (ws.readyState === WebSocket.OPEN) ws.send(frame(p))
+}
 
 const setOutbox = (queryClient: QueryClient, update: (outbox: Pending[]) => Pending[]) =>
   queryClient.setQueryData<Pending[]>(outboxQuery.queryKey, (outbox) => outbox && update(outbox))
@@ -83,7 +112,7 @@ function enqueue(queryClient: QueryClient, p: Pending, andSend = true) {
   queue(async () => {
     await saveOutbox(p)
 
-    if (andSend && socket?.readyState === WebSocket.OPEN) socket.send(frame(p))
+    if (andSend && socket?.readyState === WebSocket.OPEN) await transmit(queryClient, socket, p)
   })
 }
 
@@ -127,7 +156,10 @@ export function connect(queryClient: QueryClient) {
       const stored = await allOutbox()
       const held = queryClient.getQueryData<Pending[]>(outboxQuery.queryKey) ?? []
 
-      for (const p of toReplay(stored, held)) ws.send(frame(p))
+      for (const p of toReplay(stored, held)) {
+        if (ws.readyState !== WebSocket.OPEN) break
+        await transmit(queryClient, ws, p)
+      }
     })
     // Catch up on whatever was written while connecting or away, the first connect included: the inbox, and every
     // chat on screen, with its members' reads and presence. Chats not on screen sync when opened.
@@ -168,6 +200,7 @@ export function connect(queryClient: QueryClient) {
   return () => {
     for (const e of ['online', 'offline'] as const) window.removeEventListener(e, sync)
     clearInterval(beat)
+    clearTimeout(reopen)
     ws.close()
     socket = null
   }
@@ -223,18 +256,27 @@ export function sendTyping(chat: string) {
   socket.send(JSON.stringify({ t: 'typing', chat } satisfies ClientFrame))
 }
 
-/** Sends a message optimistically. It goes to the outbox first, so it survives a reload or going offline. */
+/**
+ * Sends a message optimistically. It goes to the outbox first, photos included, so it survives a reload or going
+ * offline.
+ */
 export function sendMessage(
   queryClient: QueryClient,
   chat: string,
   sender: string,
   body: string,
-  replyTo?: LocalMessage
+  replyTo?: LocalMessage,
+  files: Upload[] = []
 ) {
   const cid = ulid()
   // The message ends this round of typing; the next keystroke announces the next one at once.
   typedAt.delete(chat)
-  const reply = replyTo?.seq ? { seq: replyTo.seq, sender: replyTo.sender, body: replyTo.body.slice(0, 200) } : null
+
+  const reply = replyTo?.seq
+    ? { seq: replyTo.seq, sender: replyTo.sender, body: previewText(replyTo).slice(0, 200) }
+    : null
+
+  const images = files.map(({ key, w, h }) => ({ key, w, h }))
 
   const local: LocalMessage = {
     chat,
@@ -249,10 +291,20 @@ export function sendMessage(
     edited: null,
     deleted: false,
     reactions: {},
+    images,
+    link: null,
     rev: 0,
   }
 
-  enqueue(queryClient, { t: 'send', chat, cid, body, reply: reply?.seq, local })
+  enqueue(queryClient, {
+    t: 'send',
+    chat,
+    cid,
+    body,
+    reply: reply?.seq,
+    local,
+    ...(files.length && { images, files }),
+  })
 }
 
 /** Edits, deletes or reacts to a message: shown at once, sent through the outbox like a message. */

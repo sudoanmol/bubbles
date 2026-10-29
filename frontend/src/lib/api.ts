@@ -25,6 +25,7 @@ import {
   saveInboxItem,
   saveMessages,
 } from './store'
+import { keep } from './upload'
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, init)
@@ -45,7 +46,14 @@ export const PAGE = 50
 /** This device's unsent frames, in write order. Shown on top of the log, never mixed into it. */
 export const outboxQuery = queryOptions({
   queryKey: ['outbox'],
-  queryFn: allOutbox,
+  queryFn: async () => {
+    const outbox = await allOutbox()
+
+    // Unsent photos show from their files, which may not be uploaded yet.
+    for (const p of outbox) if (p.t === 'send') p.files?.forEach(keep)
+
+    return outbox
+  },
   staleTime: Infinity,
   gcTime: Infinity,
 })

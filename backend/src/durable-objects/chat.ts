@@ -2,10 +2,13 @@ import { DurableObject } from 'cloudflare:workers'
 
 import {
   applyPatch,
+  firstLink,
   MAX_MEMBERS,
+  previewText,
   type Ephemeral,
   type GroupEvent,
   type Message,
+  type MessageState,
   type Person,
   type Read,
   type Refused,
@@ -14,6 +17,7 @@ import {
   type System,
   type Write,
 } from '../protocol'
+import { unfurl } from '../unfurl'
 import { migrate } from './schema'
 
 const PAGE = 50
@@ -24,11 +28,13 @@ const RETRY_MS = 5_000
 /** The longest wait between retries while a member stays unreachable. */
 const MAX_RETRY_MS = 5 * 60_000
 
-type Row = Omit<Message, 'chat' | 'reply' | 'deleted' | 'reactions' | 'kind' | 'target'> &
+type Row = Omit<Message, 'chat' | 'reply' | 'deleted' | 'reactions' | 'images' | 'link' | 'kind' | 'target'> &
   ({ kind: 'text' | 'system'; target: null } | { kind: 'patch'; target: number }) & {
     reply: string | null
     deleted: number
     reactions: string
+    images: string
+    link: string | null
   }
 
 type MemberRow = {
@@ -73,6 +79,8 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       `ALTER TABLE member ADD COLUMN joined INTEGER NOT NULL DEFAULT 0;
        ALTER TABLE member ADD COLUMN left_seq INTEGER;
        ALTER TABLE member ADD COLUMN left_by TEXT;`,
+      `ALTER TABLE event ADD COLUMN images TEXT NOT NULL DEFAULT '[]';
+       ALTER TABLE event ADD COLUMN link TEXT;`,
     ])
   }
 
@@ -124,6 +132,8 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
         reply: r.reply === null ? null : JSON.parse(r.reply),
         deleted: r.deleted === 1,
         reactions: JSON.parse(r.reactions),
+        images: JSON.parse(r.images),
+        link: r.link === null ? null : JSON.parse(r.link),
       }))
   }
 
@@ -141,42 +151,94 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
 
     const seq = this.nextSeq()
     const base = { chat: this.id, seq, cid: f.cid, sender: uid, ts: Date.now(), rev: seq }
-    let msg: Message
 
     if (f.t === 'send') {
       const [quoted] = f.reply ? this.read("seq = ? AND kind = 'text' AND deleted = 0", f.reply) : []
 
       if (f.reply && !quoted) return { refused: 'That message is gone' }
-      const reply = quoted ? { seq: quoted.seq, sender: quoted.sender, body: quoted.body.slice(0, 200) } : null
-      msg = { ...base, kind: 'text', body: f.body, reply, target: null, edited: null, deleted: false, reactions: {} }
+      const reply = quoted ? { seq: quoted.seq, sender: quoted.sender, body: previewText(quoted).slice(0, 200) } : null
+
+      const msg: Message = {
+        ...base,
+        kind: 'text',
+        body: f.body,
+        reply,
+        target: null,
+        edited: null,
+        deleted: false,
+        reactions: {},
+        images: f.images ?? [],
+        link: null,
+      }
+
       // Writing in a chat means you've read it; others see "Read" from your reply without a separate receipt.
       this.sql.exec('UPDATE member SET read_seq = ?, read_ts = ? WHERE user_id = ?', seq, base.ts, uid)
-    } else {
-      const [target] = this.read("seq = ? AND kind = 'text'", f.seq)
+      this.commit(msg)
+      this.card(seq, msg)
 
-      if (!target) return { refused: 'That message is gone' }
-      const next = applyPatch(target, f, uid, base.ts)
-
-      if ('refused' in next) return next
-      this.sql.exec(
-        'UPDATE event SET body = ?, reply = ?, edited = ?, deleted = ?, reactions = ?, rev = ? WHERE seq = ?',
-        ...columns(next),
-        seq,
-        target.seq
-      )
-      msg = { ...base, ...next, kind: 'patch', target: target.seq }
+      return msg
     }
 
+    const [target] = this.read("seq = ? AND kind = 'text'", f.seq)
+
+    if (!target) return { refused: 'That message is gone' }
+    const next = applyPatch(target, f, uid, base.ts)
+
+    if ('refused' in next) return next
+    const msg = this.patch(target.seq, next, base)
+
+    if (f.t === 'edit') this.card(target.seq, next)
+
+    return msg
+  }
+
+  /** Updates the message at `target` in place and appends a patch entry with its new state. */
+  patch(target: number, next: MessageState, base: Pick<Message, 'seq' | 'cid' | 'sender' | 'ts'>) {
+    this.sql.exec(
+      `UPDATE event SET body = ?, reply = ?, edited = ?, deleted = ?, reactions = ?, images = ?, link = ?, rev = ?
+       WHERE seq = ?`,
+      ...columns(next),
+      base.seq,
+      target
+    )
+    const msg: Message = { ...base, ...next, chat: this.id, rev: base.seq, kind: 'patch', target }
     this.commit(msg)
 
     return msg
   }
 
+  /**
+   * Fetches the card for the first link in the text of message `seq`, unless it has that card already, and adds it
+   * with a patch, like an edit by its sender. Called after a send or an edit, the only writes that change the text, so
+   * a reaction never refetches a page. Not awaited by the write: the message goes out at once and its card follows.
+   * ponytail: lost if this object restarts while the page loads; the message then stays without a card.
+   */
+  card(seq: number, state: Pick<MessageState, 'body' | 'link'>) {
+    const url = firstLink(state.body)
+
+    if (!url || state.link?.url === url) return
+
+    void unfurl(this.env, url)
+      .then((link) => {
+        const [m] = link ? this.read("seq = ? AND kind = 'text'", seq) : []
+
+        // Edited or deleted while the page loaded, or a card came first.
+        if (!m || m.deleted || firstLink(m.body) !== url || m.link?.url === url) return
+        const { body, reply, edited, deleted, reactions, images } = m
+        this.patch(
+          seq,
+          { body, reply, edited, deleted, reactions, images, link },
+          { seq: this.nextSeq(), cid: crypto.randomUUID(), sender: m.sender, ts: Date.now() }
+        )
+      })
+      .catch((error) => console.error('Unfurl failed', error))
+  }
+
   /** Appends an entry and fans it out to every member's UserDO. */
   commit(msg: Message) {
     this.sql.exec(
-      `INSERT INTO event (seq, cid, sender, ts, kind, target, rev, body, reply, edited, deleted, reactions)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO event (seq, cid, sender, ts, kind, target, rev, body, reply, edited, deleted, reactions, images, link)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       msg.seq,
       msg.cid,
       msg.sender,
@@ -212,6 +274,8 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
       edited: null,
       deleted: false,
       reactions: {},
+      images: [],
+      link: null,
     }
 
     this.commit(msg)
@@ -470,5 +534,13 @@ export class ChatDO extends DurableObject<CloudflareBindings> {
   }
 }
 
-const columns = (m: Pick<Message, 'body' | 'reply' | 'edited' | 'deleted' | 'reactions'>) =>
-  [m.body, m.reply && JSON.stringify(m.reply), m.edited, m.deleted ? 1 : 0, JSON.stringify(m.reactions)] as const
+const columns = (m: MessageState) =>
+  [
+    m.body,
+    m.reply && JSON.stringify(m.reply),
+    m.edited,
+    m.deleted ? 1 : 0,
+    JSON.stringify(m.reactions),
+    JSON.stringify(m.images),
+    m.link && JSON.stringify(m.link),
+  ] as const

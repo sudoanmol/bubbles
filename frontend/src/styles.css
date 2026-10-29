@@ -15,6 +15,10 @@
   --color-gum: #ff7eb6;
   --color-danger: #e5383b;
   --color-mint: #1fae6b;
+  /* Text on the accents above: the same in both themes, unlike ink and paper. */
+  --color-black: #121212;
+  --color-white: #ffffff;
+  --color-muted-foreground: #6a6a6a;
 
   --font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
@@ -39,6 +43,17 @@
   }
 }
 
+/* Dark theme (next-themes puts .dark on <html>): the neutrals swap, the accents stay. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+.dark {
+  --color-paper: #161616;
+  --color-ink: #f4f4f2;
+  --color-line: #2a2a2a;
+  --color-wash: #0b0b0b;
+  --color-muted-foreground: #9a9a9a;
+}
+
 /* shadcn's semantic tokens, mapped onto the palette above. */
 @theme inline {
   --color-background: var(--color-paper);
@@ -52,7 +67,6 @@
   --color-secondary: var(--color-wash);
   --color-secondary-foreground: var(--color-ink);
   --color-muted: var(--color-wash);
-  --color-muted-foreground: #6a6a6a;
   --color-accent: var(--color-sun);
   --color-accent-foreground: var(--color-ink);
   --color-destructive: var(--color-danger);

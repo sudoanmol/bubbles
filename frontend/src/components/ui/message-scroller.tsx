@@ -58,11 +58,13 @@ function MessageScrollerItem({
   scrollAnchor = false,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Item>) {
+  // No content-visibility: rows never laid out would count as a guessed height and resize as they scroll into view,
+  // and WebKit has no scroll anchoring to hide that, so scrolling up through photos jumped.
   return (
     <MessageScrollerPrimitive.Item
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
-      className={cn('min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]', className)}
+      className={cn('min-w-0 shrink-0', className)}
       {...props}
     />
   )

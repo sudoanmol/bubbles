@@ -21,7 +21,9 @@ import { ChatHeader } from '@/components/chat-header'
 import { Composer, type ComposerMode } from '@/components/composer'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
+import { LinkCard, Linkified } from '@/components/link-card'
 import { MessageActions, Reactions } from '@/components/message-actions'
+import { Photos } from '@/components/photos'
 import { ReadBy } from '@/components/read-by'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Message, MessageContent, MessageFooter, MessageGroup } from '@/components/ui/message'
@@ -45,6 +47,9 @@ import { useTyping } from '@/lib/typing'
 
 // Only someone out of a group sees this bar, so it loads on demand.
 const LeftGroupBar = lazy(() => import('@/components/left-group-bar'))
+
+// Loads the first time a photo is opened.
+const PhotoViewer = lazy(() => import('@/components/photo-viewer'))
 
 export const Route = createFileRoute('/_app/c/$chatId')({
   // The local copy renders first; the network only blocks a chat this device has never opened.
@@ -130,8 +135,16 @@ function MessageList({
   const messages = withPending(chatId, log, outbox, uid)
   const lastMine = messages.findLast((m) => m.kind === 'text' && m.sender === uid && !m.deleted)
   const [deleting, setDeleting] = useState<LocalMessage | null>(null)
-  const { scrollToMessage } = useMessageScroller()
+  const [viewing, setViewing] = useState<{ message: LocalMessage; index: number } | null>(null)
+  const { scrollToMessage, scrollToEnd } = useMessageScroller()
   const typing = (useTyping()[chatId] ?? []).filter((id) => id !== uid)
+
+  // Sending a message always brings you to the end, wherever you were, as in every messenger.
+  const newest = messages.at(-1)
+  const justSent = newest?.sender === uid && newest.seq === null ? newest.cid : null
+  useEffect(() => {
+    if (justSent) scrollToEnd()
+  }, [justSent, scrollToEnd])
 
   // The clock the edit window is checked against; Edit disappears within half a minute of the window closing.
   const now = useNow(30_000)
@@ -233,11 +246,7 @@ function MessageList({
                             {/* ...and their small avatar sits beside its last bubble. */}
                             {labelled &&
                               (i === run.length - 1 ? (
-                                <Avatar
-                                  id={first.sender}
-                                  name={sender?.name ?? '?'}
-                                  className="size-7 self-end rounded-full text-xs"
-                                />
+                                <Avatar id={first.sender} image={sender?.image} className="size-7 self-end" />
                               ) : (
                                 <span className="w-7 shrink-0" />
                               ))}
@@ -256,42 +265,78 @@ function MessageList({
                                 </div>
                               ) : (
                                 <Bubble variant={mine ? 'outgoing' : 'incoming'}>
-                                  <BubbleContent
-                                    className={cn(corners(mine, i === 0, i === run.length - 1), m.reply && 'p-2 pb-3')}
-                                  >
-                                    {m.reply && (
-                                      <button
-                                        type="button"
-                                        onClick={() => quoted && scrollToMessage(quoted.cid, { behavior: 'smooth' })}
-                                        className={cn(
-                                          'mb-2 flex w-full min-w-0 flex-col gap-0.5 rounded-[6px_14px_14px_6px] border-l-[3px] py-1.5 pr-3 pl-2.5 text-left',
-                                          mine ? 'border-paper bg-ink/18' : 'border-cobalt bg-wash'
-                                        )}
-                                      >
-                                        <span
+                                  {/* Photos with nothing else need no bubble around them (Paper: "Images"). */}
+                                  {m.images.length > 0 && !m.body && !m.reply ? (
+                                    <Photos
+                                      images={m.images}
+                                      sending={m.seq === null && !m.failed}
+                                      failed={m.failed}
+                                      onOpen={(index) => setViewing({ message: m, index })}
+                                      className={cn(
+                                        'rounded-bubble group-data-[align=end]/bubble:self-end',
+                                        corners(mine, i === 0, i === run.length - 1)
+                                      )}
+                                    />
+                                  ) : (
+                                    <BubbleContent
+                                      className={cn(
+                                        corners(mine, i === 0, i === run.length - 1),
+                                        (m.reply || m.link) && 'flex flex-col gap-2.5 p-2 pb-3',
+                                        // The photos set the width; a caption wraps under them.
+                                        m.images.length > 0 && 'flex w-[311px] flex-col gap-1 p-1',
+                                        m.link && !m.images.length && 'w-[360px]'
+                                      )}
+                                    >
+                                      {m.reply && (
+                                        <button
+                                          type="button"
+                                          onClick={() => quoted && scrollToMessage(quoted.cid, { behavior: 'smooth' })}
                                           className={cn(
-                                            'text-[13px] leading-4 font-bold',
-                                            mine ? 'text-paper' : 'text-cobalt'
+                                            'flex w-full min-w-0 flex-col gap-0.5 rounded-[6px_14px_14px_6px] border-l-[3px] py-1.5 pr-3 pl-2.5 text-left',
+                                            mine ? 'border-white bg-black/18' : 'border-cobalt bg-wash'
                                           )}
                                         >
-                                          {names.get(m.reply.sender) ?? 'Someone'}
-                                        </span>
-                                        <span
-                                          className={cn(
-                                            'line-clamp-2 text-sm leading-[18px]',
-                                            mine ? 'text-paper/80' : 'text-muted-foreground'
-                                          )}
+                                          <span
+                                            className={cn(
+                                              'text-[13px] leading-4 font-bold',
+                                              mine ? 'text-white' : 'text-cobalt'
+                                            )}
+                                          >
+                                            {names.get(m.reply.sender) ?? 'Someone'}
+                                          </span>
+                                          <span
+                                            className={cn(
+                                              'line-clamp-2 text-sm leading-[18px]',
+                                              mine ? 'text-white/80' : 'text-muted-foreground'
+                                            )}
+                                          >
+                                            {m.reply.body}
+                                          </span>
+                                        </button>
+                                      )}
+                                      {m.images.length > 0 && (
+                                        <Photos
+                                          images={m.images}
+                                          sending={m.seq === null && !m.failed}
+                                          failed={m.failed}
+                                          onOpen={(index) => setViewing({ message: m, index })}
+                                          className="w-full rounded-[18px] rounded-b-[6px]"
+                                        />
+                                      )}
+                                      {m.link && <LinkCard link={m.link} mine={mine} />}
+                                      {m.body && (
+                                        <div
+                                          className={cn(m.images.length ? 'px-3 py-2' : (m.reply || m.link) && 'px-2')}
                                         >
-                                          {m.reply.body}
-                                        </span>
-                                      </button>
-                                    )}
-                                    {m.reply ? <div className="px-2">{m.body}</div> : m.body}
-                                  </BubbleContent>
+                                          <Linkified text={m.body} />
+                                        </div>
+                                      )}
+                                    </BubbleContent>
+                                  )}
                                   {m.failed && (
                                     <span
                                       aria-hidden="true"
-                                      className="absolute top-1/2 right-full mr-2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-full bg-danger text-sm leading-4 font-extrabold text-paper"
+                                      className="absolute top-1/2 right-full mr-2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-full bg-danger text-sm leading-4 font-extrabold text-white"
                                     >
                                       !
                                     </span>
@@ -330,13 +375,7 @@ function MessageList({
           {/* Paper: "Typing & presence". */}
           {typing.length > 0 && (
             <MessageScrollerItem className="mt-2 flex items-end gap-2 self-start">
-              {group && (
-                <Avatar
-                  id={typing[0]}
-                  name={byId.get(typing[0])?.name ?? '?'}
-                  className="size-7 rounded-full text-xs"
-                />
-              )}
+              {group && <Avatar id={typing[0]} image={byId.get(typing[0])?.image} className="size-7" />}
               <output
                 aria-label={`${typing.map((id) => names.get(id) ?? 'Someone').join(', ')} typing`}
                 className="flex gap-[5px] rounded-bubble rounded-bl-[6px] border-[1.5px] border-line bg-paper px-4 py-3.5"
@@ -350,6 +389,22 @@ function MessageList({
         </MessageScrollerContent>
       </MessageScrollerViewport>
       <MessageScrollerButton />
+      {viewing && (
+        <Suspense>
+          <PhotoViewer
+            images={viewing.message.images}
+            index={viewing.index}
+            onIndex={(index) => setViewing({ ...viewing, index })}
+            sender={{
+              id: viewing.message.sender,
+              name: byId.get(viewing.message.sender)?.name ?? 'Someone',
+              image: byId.get(viewing.message.sender)?.image,
+            }}
+            ts={viewing.message.ts}
+            onClose={() => setViewing(null)}
+          />
+        </Suspense>
+      )}
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
@@ -414,7 +469,7 @@ function Status({ message, read }: { message: LocalMessage; read: ReactNode }) {
         <button
           type="button"
           onClick={() => retryMessage(queryClient, message)}
-          className="flex items-center gap-1 rounded-full border-[1.5px] border-ink bg-paper px-2.5 py-[3px] font-semibold text-ink transition-colors hover:bg-sun"
+          className="flex items-center gap-1 rounded-full border-[1.5px] border-ink bg-paper px-2.5 py-[3px] font-semibold text-ink transition-colors hover:bg-sun hover:text-black"
         >
           <RotateCcwIcon className="size-3" strokeWidth={2.75} aria-hidden="true" />
           Retry
@@ -508,7 +563,7 @@ function LoadOlder({ chatId, messages }: { chatId: string; messages: Stored[] })
           <button
             type="button"
             onClick={() => load.reset()}
-            className="flex items-center gap-1 rounded-full border-[1.5px] border-ink bg-paper px-2.5 py-[3px] font-semibold text-ink transition-colors hover:bg-sun"
+            className="flex items-center gap-1 rounded-full border-[1.5px] border-ink bg-paper px-2.5 py-[3px] font-semibold text-ink transition-colors hover:bg-sun hover:text-black"
           >
             <RotateCcwIcon className="size-3" strokeWidth={2.75} aria-hidden="true" />
             Retry

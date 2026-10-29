@@ -1,14 +1,21 @@
 // A chat's log as the client holds and shows it: pure rules, no storage or network, so they can be checked alone.
 import { applyPatch, type ClientFrame, type Message, type Patch, type System, type Text } from 'backend/protocol'
 
+import type { Upload } from './upload'
+
 /**
  * A message or group event as shown: `seq` is null until the server acks it, and `failed` once it refused it.
  * Only messages are ever pending; group events come from the server.
  */
 export type LocalMessage = Omit<Text | System, 'seq'> & { seq: number | null; failed?: boolean }
 
-/** An outbox entry: a frame the server has not acked. A send keeps the message to show meanwhile. */
-export type Pending = ((Extract<ClientFrame, { t: 'send' }> & { local: LocalMessage }) | Patch) & { failed?: boolean }
+/**
+ * An outbox entry: a frame the server has not acked. A send keeps the message to show meanwhile, and its photos until
+ * they're uploaded.
+ */
+export type Pending = ((Extract<ClientFrame, { t: 'send' }> & { local: LocalMessage; files?: Upload[] }) | Patch) & {
+  failed?: boolean
+}
 
 /**
  * A chat's messages as shown: the server's log with this device's unsent frames on top, sends as pending messages and
@@ -79,8 +86,8 @@ export function merge(log: Message[], incoming: Message[]) {
     const target = p.kind === 'patch' ? bySeq.get(p.target) : undefined
 
     if (target && target.rev < p.seq) {
-      const { body, reply, edited, deleted, reactions } = p
-      bySeq.set(target.seq, { ...target, body, reply, edited, deleted, reactions, rev: p.seq })
+      const { body, reply, edited, deleted, reactions, images, link } = p
+      bySeq.set(target.seq, { ...target, body, reply, edited, deleted, reactions, images, link, rev: p.seq })
     }
   }
 

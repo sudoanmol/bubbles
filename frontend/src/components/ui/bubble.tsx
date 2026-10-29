@@ -12,7 +12,7 @@ const bubbleVariants = cva(
         // Someone else's message: white with a hairline.
         incoming: '*:data-[slot=bubble-content]:border-line *:data-[slot=bubble-content]:bg-paper',
         // Your message: cobalt.
-        outgoing: '*:data-[slot=bubble-content]:bg-cobalt *:data-[slot=bubble-content]:text-paper',
+        outgoing: '*:data-[slot=bubble-content]:bg-cobalt *:data-[slot=bubble-content]:text-white',
       },
     },
     defaultVariants: { variant: 'incoming' },

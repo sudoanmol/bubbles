@@ -210,7 +210,7 @@ function ComboboxChip({
     <ComboboxPrimitive.Chip
       data-slot="combobox-chip"
       className={cn(
-        'flex h-8 w-fit items-center justify-center gap-1.5 rounded-full border-[1.5px] border-ink bg-paper pr-2 pl-1 text-sm font-semibold whitespace-nowrap text-ink has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-50 has-data-[slot=combobox-chip-remove]:pr-1 data-highlighted:bg-sun',
+        'flex h-8 w-fit items-center justify-center gap-1.5 rounded-full border-[1.5px] border-ink bg-paper pr-2 pl-1 text-sm font-semibold whitespace-nowrap text-ink has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-50 has-data-[slot=combobox-chip-remove]:pr-1 data-highlighted:bg-sun data-highlighted:text-black',
         className
       )}
       {...props}

@@ -44,8 +44,11 @@ function AppLayout() {
 
   return (
     <div className="flex h-dvh">
-      {/* On phones the inbox and the chat each take the full screen. */}
-      <Sidebar user={user} className={inChat ? 'hidden md:flex' : 'flex'} />
+      {/* On phones the inbox and the chat each take the full screen. The live session, so a profile change shows at once. */}
+      <Sidebar
+        user={session.data?.user.id === user.id ? session.data.user : user}
+        className={inChat ? 'hidden md:flex' : 'flex'}
+      />
       <main className={`min-w-0 flex-1 flex-col bg-wash ${inChat ? 'flex' : 'hidden md:flex'}`}>
         <Outlet />
       </main>

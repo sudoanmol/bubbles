@@ -135,7 +135,7 @@ export function Reactions({
           aria-pressed={current === emoji}
           disabled={!onReact}
           onClick={() => onReact?.(current === emoji ? null : emoji)}
-          className="flex items-center gap-[5px] rounded-full border-[1.5px] border-ink bg-paper py-0.5 pr-[7px] pl-[7px] text-[15px] leading-5 aria-pressed:bg-sun"
+          className="flex items-center gap-[5px] rounded-full border-[1.5px] border-ink bg-paper py-0.5 pr-[7px] pl-[7px] text-[15px] leading-5 aria-pressed:bg-sun aria-pressed:text-black"
         >
           {emoji}
           {n > 1 && <span className="text-xs leading-4 font-bold">{n}</span>}

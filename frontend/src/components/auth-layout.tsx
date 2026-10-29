@@ -4,7 +4,7 @@ import { Logo } from './logo'
 
 const stickerStyles = [
   'rotate-[4deg] rounded-[22px_22px_6px_22px] bg-paper px-5 py-3.5',
-  'rotate-[-3deg] rounded-[22px_22px_22px_6px] bg-cobalt px-5 py-3.5 text-paper',
+  'rotate-[-3deg] rounded-[22px_22px_22px_6px] bg-cobalt px-5 py-3.5 text-white',
   'rotate-[6deg] rounded-full bg-gum px-4 py-2.5 text-sm font-semibold',
 ]
 
@@ -20,7 +20,7 @@ export function AuthLayout({
 }) {
   return (
     <div className="flex min-h-dvh gap-4 p-4">
-      <aside className="sticky top-4 hidden h-[calc(100dvh-2rem)] flex-1 flex-col justify-between gap-8 overflow-hidden rounded-[28px] bg-sun p-12 lg:flex">
+      <aside className="sticky top-4 hidden h-[calc(100dvh-2rem)] flex-1 flex-col justify-between gap-8 overflow-hidden rounded-[28px] bg-sun p-12 text-black lg:flex">
         <Logo size="lg" />
         <div className="flex flex-col items-end gap-3.5 self-end">
           {stickers.map((text, i) => (

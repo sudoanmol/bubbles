@@ -6,12 +6,59 @@ export const MAX_BODY = 4000
 export const ChatId = v.pipe(v.string(), v.regex(/^[0-9a-z]{26,32}$/))
 
 const Body = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_BODY))
+
+/** A message's text, which may be empty when it has photos. */
+const Caption = v.pipe(v.string(), v.trim(), v.maxLength(MAX_BODY))
 const Seq = v.pipe(v.number(), v.integer(), v.minValue(1))
 const Cid = v.pipe(v.string(), v.ulid())
 const Emoji = v.pipe(v.string(), v.maxLength(32), v.regex(/^\p{Extended_Pictographic}/u))
 
 /** A quote of the message being replied to, as it was when the reply was sent. */
 const Reply = v.object({ seq: v.number(), sender: v.string(), body: v.string() })
+
+export const MAX_IMAGES = 5
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+/** An uploaded photo: its storage key (`<uploader id>/<ulid>`, see routes/media.ts) and size, to lay it out unloaded. */
+const Image = v.object({
+  key: v.pipe(v.string(), v.regex(/^[\w-]{1,64}\/[0-9A-Z]{26}$/)),
+  w: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  h: v.pipe(v.number(), v.integer(), v.minValue(1)),
+})
+
+export type Image = v.InferOutput<typeof Image>
+
+/** Where a photo is served from. */
+export const mediaUrl = (key: string) => `/api/media/${key}`
+
+/** The card for a message's first link, filled in by the server once it has fetched the page. */
+const Link = v.object({
+  url: v.string(),
+  site: v.string(),
+  title: v.string(),
+  description: v.nullable(v.string()),
+  image: v.nullable(v.string()),
+})
+
+export type Link = v.InferOutput<typeof Link>
+
+/** URLs in a message's text: http(s) ones and bare www. ones. */
+const URLS = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi
+
+/**
+ * The links in a text, with where each starts and ends. Trailing punctuation is left out, so "see x.com/a." links
+ * x.com/a. ponytail: a URL ending in ")" loses it (some Wikipedia links); balance parentheses if that comes up.
+ */
+export function findLinks(text: string) {
+  return [...text.matchAll(URLS)].map((m) => {
+    const raw = m[0].replace(/[.,;:!?)\]'"]+$/, '')
+
+    return { start: m.index, end: m.index + raw.length, href: raw.startsWith('www.') ? `https://${raw}` : raw }
+  })
+}
+
+/** The URL a message's card is for. */
+export const firstLink = (text: string) => findLinks(text)[0]?.href ?? null
 
 /**
  * One entry in a chat's log; every entry gets the next `seq`. A `text` entry is a message, and its fields hold the
@@ -32,6 +79,8 @@ const Entry = {
   deleted: v.boolean(),
   /** One reaction per person: user id → emoji. */
   reactions: v.record(v.string(), v.string()),
+  images: v.array(Image),
+  link: v.nullable(Link),
   rev: v.number(),
 }
 
@@ -69,12 +118,23 @@ export type GroupEvent =
 export const groupEvent = (body: string) => JSON.parse(body) as GroupEvent
 
 /** The parts of a message that patches change. */
-export type MessageState = Pick<Message, 'body' | 'reply' | 'edited' | 'deleted' | 'reactions'>
+export type MessageState = Pick<Message, 'body' | 'reply' | 'edited' | 'deleted' | 'reactions' | 'images' | 'link'>
 
 const OnMessage = { cid: Cid, chat: ChatId, seq: Seq }
 
 export const ClientFrame = v.variant('t', [
-  v.object({ t: v.literal('send'), cid: Cid, chat: ChatId, body: Body, reply: v.optional(Seq) }),
+  /** Text, photos with an optional caption, or both. The photos are uploaded before this is sent. */
+  v.pipe(
+    v.object({
+      t: v.literal('send'),
+      cid: Cid,
+      chat: ChatId,
+      body: Caption,
+      reply: v.optional(Seq),
+      images: v.optional(v.pipe(v.array(Image), v.maxLength(MAX_IMAGES))),
+    }),
+    v.check((f) => f.body !== '' || !!f.images?.length, 'Empty message')
+  ),
   v.object({ t: v.literal('edit'), ...OnMessage, body: Body }),
   v.object({ t: v.literal('delete'), ...OnMessage }),
   v.object({ t: v.literal('react'), ...OnMessage, emoji: v.nullable(Emoji) }),
@@ -110,7 +170,8 @@ export function applyPatch(
   ts: number
 ): MessageState | Refused {
   if (m.deleted) return { refused: 'That message was deleted' }
-  const state = { body: m.body, reply: m.reply, edited: m.edited, deleted: m.deleted, reactions: m.reactions }
+  const { body, reply, edited, deleted, reactions, images, link } = m
+  const state = { body, reply, edited, deleted, reactions, images, link }
 
   if (p.t === 'react') {
     const { [uid]: _, ...others } = m.reactions
@@ -120,12 +181,13 @@ export function applyPatch(
 
   if (m.sender !== uid) return { refused: 'You can only change your own messages' }
 
+  // An edit keeps the card only while the text still starts with its link; the server unfurls a new one.
   if (p.t === 'edit')
     return canEdit(m, uid, ts)
-      ? { ...state, body: p.body, edited: ts }
+      ? { ...state, body: p.body, edited: ts, link: link?.url === firstLink(p.body) ? link : null }
       : { refused: 'Messages can only be edited for 15 minutes' }
 
-  return { ...state, body: '', reply: null, deleted: true, reactions: {} }
+  return { ...state, body: '', reply: null, deleted: true, reactions: {}, images: [], link: null }
 }
 
 export const ServerFrame = v.variant('t', [
@@ -190,10 +252,16 @@ export function nextPreview(cur: Preview | null, m: Message): Preview | null {
   if (m.kind !== 'patch')
     return cur && (m.seq < cur.seq || (m.seq === cur.seq && m.rev <= cur.rev))
       ? cur
-      : { seq: m.seq, kind: m.kind, sender: m.sender, body: m.body, deleted: m.deleted, rev: m.rev }
+      : { seq: m.seq, kind: m.kind, sender: m.sender, body: previewText(m), deleted: m.deleted, rev: m.rev }
 
-  return cur?.seq === m.target && m.seq > cur.rev ? { ...cur, body: m.body, deleted: m.deleted, rev: m.seq } : cur
+  return cur?.seq === m.target && m.seq > cur.rev
+    ? { ...cur, body: previewText(m), deleted: m.deleted, rev: m.seq }
+    : cur
 }
+
+/** A message as one line: photos show as "📷 Photo", or the camera and their caption. */
+export const previewText = (m: Pick<Message, 'body' | 'images'>) =>
+  m.images.length ? `📷 ${m.body || (m.images.length > 1 ? 'Photos' : 'Photo')}` : m.body
 
 /** How far a user has read a chat, and how many messages from others came after that. */
 export type ReadState = { lastSeq: number; readSeq: number; unread: number }
