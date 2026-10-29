@@ -1,16 +1,24 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { applyPatch, ServerFrame, type ClientFrame, type InboxItem, type Message, type Patch } from 'backend/protocol'
+import {
+  applyPatch,
+  PING_MS,
+  ServerFrame,
+  type ClientFrame,
+  type InboxItem,
+  type Message,
+  type Patch,
+} from 'backend/protocol'
 import { WebSocket } from 'partysocket'
 import { useSyncExternalStore } from 'react'
 import { monotonicFactory } from 'ulid'
 import * as v from 'valibot'
 
 import {
+  applyPresence,
   applyRead,
   bumpInbox,
   clearUnread,
   inboxQuery,
-  markOnline,
   messagesQuery,
   outboxQuery,
   upsertMessages,
@@ -85,8 +93,20 @@ export function connect(queryClient: QueryClient) {
   for (const e of ['online', 'offline'] as const) window.addEventListener(e, sync)
   ws.addEventListener('close', sync)
 
+  // Heartbeat: the server answers each ping (without waking up), which also keeps this device "online". A ping still
+  // unanswered at the next beat means the connection died without closing (a network switch, a sleeping laptop), so
+  // reconnect now instead of waiting minutes for the OS to notice.
+  let answered = true
+  const beat = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) return
+    if (!answered) return ws.reconnect()
+    answered = false
+    ws.send('ping')
+  }, PING_MS)
+
   ws.addEventListener('open', () => {
     sync()
+    answered = true
     // Reads sent before this connect may have been lost with the old socket; the chat on screen sends its read again.
     readSent.clear()
     // Anything unsent, from this session or an earlier one, goes again in the order it was written, except what the
@@ -102,6 +122,7 @@ export function connect(queryClient: QueryClient) {
   })
 
   ws.addEventListener('message', (event) => {
+    if (event.data === 'pong') return void (answered = true)
     const parsed = v.safeParse(ServerFrame, JSON.parse(event.data))
     if (!parsed.success) return
     const f = parsed.output
@@ -118,7 +139,9 @@ export function connect(queryClient: QueryClient) {
         break
       case 'typing':
         startTyping(f.chat, f.uid)
-        markOnline(queryClient, f.chat, f.uid)
+        break
+      case 'presence':
+        applyPresence(queryClient, f.uid, { online: f.online, lastSeen: f.lastSeen })
         break
     }
   })
@@ -126,6 +149,7 @@ export function connect(queryClient: QueryClient) {
   socket = ws
   return () => {
     for (const e of ['online', 'offline'] as const) window.removeEventListener(e, sync)
+    clearInterval(beat)
     ws.close()
     socket = null
   }
@@ -138,9 +162,8 @@ function receive(queryClient: QueryClient, msg: Message) {
   // Stored, so no longer pending; this socket's own copy can beat the ack. saveMessages clears it from IndexedDB.
   setOutbox(queryClient, (outbox) => outbox.filter((p) => p.cid !== msg.cid))
   void saveMessages(msg.chat, [msg])
-  // Their message replaces the dots; a fresh entry (not a copy from a sync) means they're around.
+  // Their message replaces the dots.
   if (msg.kind === 'text') stopTyping(msg.chat, msg.sender)
-  if (msg.sender !== currentUid() && Date.now() - msg.ts < 60_000) markOnline(queryClient, msg.chat, msg.sender)
   // A message past a gap shows right away; the gap is fetched now if the chat is on screen, or when it next opens.
   const hi = held && cursor(held)
   if (hi !== undefined && msg.seq > hi + 1) void queryClient.invalidateQueries({ queryKey })

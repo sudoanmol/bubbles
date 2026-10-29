@@ -99,9 +99,9 @@ export const messagesQuery = (chat: string) =>
   })
 
 /**
- * Whether the other members are online, polled while the chat is open and refetched on reconnect. Never stored: an
- * old answer is worse than none. A member typing or writing marks them online in between.
- * ponytail: polls every minute; push changes to open chats if that lag ever matters.
+ * Whether the other members are online. Asking subscribes this user to their changes for a couple of minutes, which
+ * arrive as `presence` frames; the poll renews that and catches a device that died without closing. Refetched on
+ * reconnect, never stored: an old answer is worse than none.
  */
 export const presenceQuery = (chat: string) =>
   queryOptions({
@@ -110,10 +110,10 @@ export const presenceQuery = (chat: string) =>
     refetchInterval: 60_000,
   })
 
-/** A member just did something in the chat, so they're online. */
-export const markOnline = (queryClient: QueryClient, chat: string, uid: string) =>
-  queryClient.setQueryData<Record<string, Presence>>(presenceQuery(chat).queryKey, (all) =>
-    all && !all[uid]?.online ? { ...all, [uid]: { online: true, lastSeen: all[uid]?.lastSeen ?? null } } : all
+/** A pushed presence change, applied to every open chat that shows that user. */
+export const applyPresence = (queryClient: QueryClient, uid: string, presence: Presence) =>
+  queryClient.setQueriesData<Record<string, Presence>>({ queryKey: ['presence'] }, (all) =>
+    all && uid in all ? { ...all, [uid]: presence } : all
   )
 
 export const searchUsersQuery = (q: string) =>

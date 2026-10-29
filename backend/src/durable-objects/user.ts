@@ -5,6 +5,7 @@ import {
   ClientFrame,
   nextPreview,
   nextRead,
+  PING_MS,
   type Ephemeral,
   type Message,
   type Presence,
@@ -12,6 +13,16 @@ import {
   type ServerFrame,
 } from '../protocol'
 import { migrate } from './schema'
+
+/**
+ * A socket counts as alive while it has pinged recently. Three pings' worth, since a background tab may only run its
+ * timers once a minute.
+ */
+const ALIVE_MS = 3 * PING_MS
+/** How long after the last device leaves before watchers are told: a reload must not flicker "online" off and on. */
+const GRACE_MS = 10_000
+/** How long a watch lasts; an open chat renews it every minute by asking for presence again. */
+const WATCH_MS = 150_000
 
 export type InboxRow = {
   chat_id: string
@@ -40,7 +51,11 @@ export class UserDO extends DurableObject<CloudflareBindings> {
        );`,
       `ALTER TABLE chat ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0;
        ALTER TABLE chat ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;`,
+      // Users with a chat open that shows this user's presence, until their watch lapses.
+      'CREATE TABLE watcher (user_id TEXT PRIMARY KEY, until INTEGER NOT NULL);',
     ])
+    // Heartbeats are answered by the runtime, so an idle socket stays hibernated (and free) while proving it's alive.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))
   }
 
   get uid() {
@@ -50,7 +65,10 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   /** Accepts a hibernating WebSocket; the Worker has already authenticated the user. */
   async fetch() {
     const { 0: client, 1: server } = new WebSocketPair()
+    const wasOnline = this.presence().online
     this.ctx.acceptWebSocket(server)
+    server.serializeAttachment({ since: Date.now() })
+    if (!wasOnline) this.announce()
     return new Response(null, { status: 101, webSocket: client })
   }
 
@@ -116,20 +134,46 @@ export class UserDO extends DurableObject<CloudflareBindings> {
     for (const ws of this.ctx.getWebSockets()) send(ws, frame)
   }
 
-  /** The last socket to close sets when the user was last seen; while another is open they show as online anyway. */
+  /** The last socket to close sets when the user was last seen; watchers hear about it once the grace period ends. */
   webSocketClose() {
     this.ctx.storage.kv.put('lastSeen', Date.now())
+    if (!this.alive().length) void this.ctx.storage.setAlarm(Date.now() + GRACE_MS)
+  }
+
+  alarm() {
+    if (!this.presence().online) this.announce()
+  }
+
+  /** Open sockets that pinged (or connected) recently. A phone that lost signal stops pinging and drops out. */
+  alive() {
+    const now = Date.now()
+    return this.ctx.getWebSockets().filter((ws) => {
+      const since = (ws.deserializeAttachment() as { since: number } | null)?.since ?? 0
+      const ping = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0
+      return ws.readyState === WebSocket.OPEN && now - Math.max(since, ping) < ALIVE_MS
+    })
   }
 
   /**
-   * Online while any device is connected.
-   * ponytail: a device that drops without closing shows online until the runtime notices the dead socket.
+   * Online while any device is alive, or within the grace period after the last one left. `watcher` (asking from a chat
+   * they have open) is told of changes until their watch lapses.
+   * ponytail: a device that dies silently is noticed by the next poll (within a minute), not pushed.
    */
-  presence(): Presence {
-    return {
-      online: this.ctx.getWebSockets().some((ws) => ws.readyState === WebSocket.OPEN),
-      lastSeen: this.ctx.storage.kv.get<number>('lastSeen') ?? null,
-    }
+  presence(watcher?: string): Presence {
+    const now = Date.now()
+    if (watcher) this.sql.exec('INSERT OR REPLACE INTO watcher (user_id, until) VALUES (?, ?)', watcher, now + WATCH_MS)
+    const lastSeen = this.ctx.storage.kv.get<number>('lastSeen') ?? null
+    return { online: this.alive().length > 0 || (lastSeen !== null && now - lastSeen < GRACE_MS), lastSeen }
+  }
+
+  /** Tells everyone watching this user that they came online or went away. */
+  announce() {
+    this.sql.exec('DELETE FROM watcher WHERE until < ?', Date.now())
+    const frame = { t: 'presence', uid: this.uid, ...this.presence() } as const
+    for (const { user_id } of this.sql.exec<{ user_id: string }>('SELECT user_id FROM watcher'))
+      void this.env.USER.get(this.env.USER.idFromName(user_id))
+        .push(frame)
+        .catch((error) => console.error('Presence failed', error))
   }
 
   /** Called by ChatDO with a chat's next log entries, in order. Safe to call again with entries already stored. */

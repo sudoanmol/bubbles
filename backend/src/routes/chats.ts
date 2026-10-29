@@ -24,13 +24,15 @@ export const chats = new Hono<AppEnv>()
       reads: Object.fromEntries(rows.map((r) => [r.user_id, { seq: r.read_seq, ts: r.read_ts }])),
     } satisfies Chat)
   })
-  // Polled while the chat is open.
+  // Asked when a chat opens and every minute while it stays open; each ask also (re)subscribes the asker to changes.
   // ponytail: one UserDO call per member per poll; show a count instead for big groups.
   .get('/:id/presence', async (c) => {
     const rows = await chatDO(c.env, parseChatId(c.req.param('id'))).members(c.var.uid)
     if (!rows) throw new HTTPException(404, { message: 'Chat not found' })
     const others = rows.filter((r) => r.user_id !== c.var.uid)
-    const entries = await Promise.all(others.map(async (r) => [r.user_id, await userDO(c.env, r.user_id).presence()]))
+    const entries = await Promise.all(
+      others.map(async (r) => [r.user_id, await userDO(c.env, r.user_id).presence(c.var.uid)])
+    )
     return c.json(Object.fromEntries(entries) as Record<string, Presence>)
   })
   .get('/:id/messages', async (c) => {

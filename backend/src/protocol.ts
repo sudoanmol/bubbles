@@ -111,11 +111,16 @@ export const ServerFrame = v.variant('t', [
   }),
   /** A member is typing in a chat. Shown for a few seconds, or until their message arrives. */
   v.object({ t: v.literal('typing'), chat: v.string(), uid: v.string() }),
+  /** Someone this user is watching (a member of a chat they have open) came online or went away. */
+  v.object({ t: v.literal('presence'), uid: v.string(), online: v.boolean(), lastSeen: v.nullable(v.number()) }),
 ])
 export type ServerFrame = v.InferOutput<typeof ServerFrame>
 
 /** Ephemeral frames: passed to a user's devices as they happen, never stored or retried. */
-export type Ephemeral = Extract<ServerFrame, { t: 'read' | 'typing' }>
+export type Ephemeral = Extract<ServerFrame, { t: 'read' | 'typing' | 'presence' }>
+
+/** How often each device pings its socket; Cloudflare answers without waking the UserDO. */
+export const PING_MS = 30_000
 
 /** Whether a user has a device connected now, and when their last one disconnected (null if never seen). */
 export type Presence = { online: boolean; lastSeen: number | null }
