@@ -6,7 +6,13 @@ export default defineConfig({
     cloudflareTest(async () => ({
       wrangler: { configPath: './wrangler.jsonc' },
       // Tests that use D1 apply these first (`applyD1Migrations`).
-      miniflare: { bindings: { TEST_MIGRATIONS: await readD1Migrations(`${import.meta.dirname}/drizzle`) } },
+      miniflare: {
+        bindings: {
+          TEST_MIGRATIONS: await readD1Migrations(`${import.meta.dirname}/drizzle`),
+          // Tests run like local dev, which skips rate limits.
+          BETTER_AUTH_URL: 'http://localhost:3100',
+        },
+      },
     })),
   ],
 })

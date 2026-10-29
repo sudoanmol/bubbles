@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import * as v from 'valibot'
 
-import { allowed } from '../env'
+import { CONNECTS, FRAMES, isLocal, Window } from '../limits'
 import {
   ClientFrame,
   nextGroup,
@@ -79,7 +79,13 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   }
 
   /** Accepts a hibernating WebSocket; the Worker has already authenticated the user. */
+  frames = new Window(FRAMES)
+  connects = new Window(CONNECTS)
+
   async fetch() {
+    // The client backs off and tries again.
+    if (!isLocal(this.env) && !this.connects.hit()) return new Response('Too many connections', { status: 429 })
+
     const { 0: client, 1: server } = new WebSocketPair()
     const wasOnline = this.presence().online
     this.ctx.acceptWebSocket(server)
@@ -111,7 +117,7 @@ export class UserDO extends DurableObject<CloudflareBindings> {
       return send(ws, { t: 'error', message: 'Invalid frame' })
     }
 
-    if (!(await allowed(this.env, this.env.FRAME_LIMIT, this.uid))) {
+    if (!isLocal(this.env) && !this.frames.hit()) {
       // A refusal, not a failure: the client shows the message as not sent instead of replaying it into the limit.
       if (frame.t === 'read' || frame.t === 'typing') return
 
