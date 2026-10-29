@@ -19,7 +19,6 @@
     "@tanstack/react-router": "1.170.46",
     "backend": "workspace:*",
     "better-auth": "^1.7.14",
-    "boring-avatars": "^2.0.4",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
     "date-fns": "^4.4.0",
