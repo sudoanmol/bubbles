@@ -3,6 +3,7 @@ import * as v from 'valibot'
 
 import {
   ClientFrame,
+  nextGroup,
   nextPreview,
   nextRead,
   PING_MS,
@@ -26,7 +27,13 @@ const WATCH_MS = 150_000
 
 export type InboxRow = {
   chat_id: string
+  kind: 'dm' | 'group'
+  /** The other person in a DM; empty for a group. */
   peer_id: string
+  /** A group's name. */
+  name: string | null
+  /** 0 once this user has left the group, been removed, or it was deleted. */
+  active: number
   last_seq: number
   /** JSON of a Preview. */
   preview: string | null
@@ -53,6 +60,9 @@ export class UserDO extends DurableObject<CloudflareBindings> {
        ALTER TABLE chat ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;`,
       // Users with a chat open that shows this user's presence, until their watch lapses.
       'CREATE TABLE watcher (user_id TEXT PRIMARY KEY, until INTEGER NOT NULL);',
+      `ALTER TABLE chat ADD COLUMN kind TEXT NOT NULL DEFAULT 'dm';
+       ALTER TABLE chat ADD COLUMN name TEXT;
+       ALTER TABLE chat ADD COLUMN active INTEGER NOT NULL DEFAULT 1;`,
     ])
     // Heartbeats are answered by the runtime, so an idle socket stays hibernated (and free) while proving it's alive.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))
@@ -177,27 +187,31 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   }
 
   /** Called by ChatDO with a chat's next log entries, in order. Safe to call again with entries already stored. */
-  deliver(entries: Message[], peer: string) {
+  deliver(entries: Message[], chat: { kind: 'dm'; peer: string } | { kind: 'group' }) {
     for (const msg of entries) {
       const row = this.sql.exec<InboxRow>('SELECT * FROM chat WHERE chat_id = ?', msg.chat).toArray()[0]
       const current: Preview | null = row?.preview ? JSON.parse(row.preview) : null
       const preview = nextPreview(current, msg)
-      const read = nextRead(
-        { lastSeq: row?.last_seq ?? 0, readSeq: row?.read_seq ?? 0, unread: row?.unread ?? 0 },
-        msg,
-        this.uid
-      )
+      const lastSeq = row?.last_seq ?? 0
+      const read = nextRead({ lastSeq, readSeq: row?.read_seq ?? 0, unread: row?.unread ?? 0 }, msg, this.uid)
+      const was = { name: row?.name ?? '', active: (row?.active ?? 1) === 1 }
+      const group = msg.seq > lastSeq ? nextGroup(was, msg, this.uid) : was
       this.sql.exec(
-        `INSERT INTO chat (chat_id, peer_id, last_seq, preview, updated_at, read_seq, unread) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT (chat_id) DO UPDATE SET last_seq = ?3, preview = ?4, updated_at = ?5, read_seq = ?6, unread = ?7`,
+        `INSERT INTO chat (chat_id, kind, peer_id, last_seq, preview, updated_at, read_seq, unread, name, active)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT (chat_id) DO UPDATE SET last_seq = ?4, preview = ?5, updated_at = ?6, read_seq = ?7, unread = ?8,
+           name = ?9, active = ?10`,
         msg.chat,
-        peer,
+        chat.kind,
+        chat.kind === 'dm' ? chat.peer : '',
         read.lastSeq,
         preview && JSON.stringify(preview),
         // The chat moves up only for a new message, not for a change to an old one.
         preview && preview.seq !== current?.seq ? msg.ts : (row?.updated_at ?? msg.ts),
         read.readSeq,
-        read.unread
+        read.unread,
+        chat.kind === 'group' ? group.name : null,
+        group.active ? 1 : 0
       )
     }
     const frames = entries.map((msg) => JSON.stringify({ t: 'msg', msg } satisfies ServerFrame))
@@ -207,6 +221,11 @@ export class UserDO extends DurableObject<CloudflareBindings> {
   /** Adds a chat the user opened before anyone has written in it. */
   open(chat: string, peer: string) {
     this.sql.exec('INSERT OR IGNORE INTO chat (chat_id, peer_id, updated_at) VALUES (?, ?, ?)', chat, peer, Date.now())
+  }
+
+  /** Drops a group this user is no longer in from their inbox ("Delete chat"). */
+  forget(chat: string) {
+    this.sql.exec('DELETE FROM chat WHERE chat_id = ? AND active = 0', chat)
   }
 
   inbox() {

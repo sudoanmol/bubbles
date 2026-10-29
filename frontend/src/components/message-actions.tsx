@@ -11,7 +11,7 @@ const pill = 'flex items-center rounded-full border-2 border-ink bg-paper shadow
 const action = 'flex size-8 items-center justify-center rounded-full transition-colors hover:bg-wash'
 
 /**
- * The toolbar beside a bubble (Paper: "Message actions"). It shows while the message is hovered or has focus (a tap
+ * The toolbar beside a bubble (Paper: "Message actions"). It shows while the bubble is hovered or has focus (a tap
  * on touch screens), with the message's time beyond it, and turns into the quick reactions when you pick react.
  */
 export function MessageActions({
@@ -44,10 +44,11 @@ export function MessageActions({
       tabIndex={-1}
       className={cn(
         'absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-2.5 transition-opacity duration-100',
-        mine ? 'right-full mr-2 flex-row-reverse' : 'left-full ml-2',
+        // Padding, not margin, bridges the gap so the pointer can cross from the bubble without losing hover.
+        mine ? 'right-full flex-row-reverse pr-2' : 'left-full pl-2',
         reacting
           ? 'opacity-100'
-          : 'pointer-events-none opacity-0 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100'
+          : 'pointer-events-none opacity-0 group-focus-within/bubble:pointer-events-auto group-focus-within/bubble:opacity-100 group-hover/bubble:pointer-events-auto group-hover/bubble:opacity-100'
       )}
       // Leaving the strip (focus moving outside it) closes it, as does Escape.
       onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setReacting(false)}
@@ -114,7 +115,8 @@ export function Reactions({
   message: LocalMessage
   mine: boolean
   uid: string
-  onReact: (emoji: string | null) => void
+  /** Absent when you can't react (you're out of the group): the counts still show. */
+  onReact?: (emoji: string | null) => void
 }) {
   const counts = new Map<string, number>()
   for (const emoji of Object.values(message.reactions)) counts.set(emoji, (counts.get(emoji) ?? 0) + 1)
@@ -128,7 +130,8 @@ export function Reactions({
           type="button"
           aria-label={`${emoji} ${n}`}
           aria-pressed={current === emoji}
-          onClick={() => onReact(current === emoji ? null : emoji)}
+          disabled={!onReact}
+          onClick={() => onReact?.(current === emoji ? null : emoji)}
           className="flex items-center gap-[5px] rounded-full border-[1.5px] border-ink bg-paper py-0.5 pr-[7px] pl-[7px] text-[15px] leading-5 aria-pressed:bg-sun"
         >
           {emoji}

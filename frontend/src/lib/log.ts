@@ -1,8 +1,11 @@
 // A chat's log as the client holds and shows it: pure rules, no storage or network, so they can be checked alone.
-import { applyPatch, type ClientFrame, type Message, type Patch, type Text } from 'backend/protocol'
+import { applyPatch, type ClientFrame, type Message, type Patch, type System, type Text } from 'backend/protocol'
 
-/** A message as shown: `seq` is null until the server acks it, and `failed` once it refused it. */
-export type LocalMessage = Omit<Text, 'seq'> & { seq: number | null; failed?: boolean }
+/**
+ * A message or group event as shown: `seq` is null until the server acks it, and `failed` once it refused it.
+ * Only messages are ever pending; group events come from the server.
+ */
+export type LocalMessage = Omit<Text | System, 'seq'> & { seq: number | null; failed?: boolean }
 
 /** An outbox entry: a frame the server has not acked. A send keeps the message to show meanwhile. */
 export type Pending = ((Extract<ClientFrame, { t: 'send' }> & { local: LocalMessage }) | Patch) & { failed?: boolean }
@@ -14,7 +17,7 @@ export type Pending = ((Extract<ClientFrame, { t: 'send' }> & { local: LocalMess
  */
 export function withPending(chat: string, log: Message[], outbox: Pending[], uid: string): LocalMessage[] {
   const acked = new Set(log.map((m) => m.cid))
-  let out: LocalMessage[] = log.filter((m) => m.kind === 'text')
+  let out: LocalMessage[] = log.filter((m) => m.kind !== 'patch')
   for (const p of outbox) {
     if (p.chat !== chat || acked.has(p.cid)) continue
     if (p.t === 'send') out = [...out, { ...p.local, failed: p.failed }]

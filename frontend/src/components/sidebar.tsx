@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
+import type { InboxItem } from 'backend/protocol'
 import { cn } from 'cn'
 import { SearchIcon } from 'lucide-react'
 import { useState } from 'react'
@@ -8,6 +9,7 @@ import { Avatar } from '@/components/avatar'
 import { Logo } from '@/components/logo'
 import { NewChat } from '@/components/new-chat'
 import { inboxQuery } from '@/lib/api'
+import { describeText, firstName } from '@/lib/group-events'
 import { sessionQuery, signOut as requestSignOut, type Session } from '@/lib/session'
 import { deleteStore } from '@/lib/store'
 import { formatShort } from '@/lib/time'
@@ -33,7 +35,11 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
 
   const query = search.trim().toLowerCase()
   const items = (inbox.data ?? []).filter(
-    (i) => !query || i.peer.name.toLowerCase().includes(query) || i.peer.username.includes(query)
+    (i) =>
+      !query ||
+      (i.kind === 'dm'
+        ? i.peer.name.toLowerCase().includes(query) || i.peer.username.includes(query)
+        : i.name.toLowerCase().includes(query))
   )
 
   return (
@@ -69,10 +75,15 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
             params={{ chatId: item.chatId }}
             className="group flex items-center gap-3 rounded-[14px] p-2.5 transition-colors hover:bg-wash data-[status=active]:bg-ink"
           >
-            <Avatar id={item.peer.id} name={item.peer.name} />
+            {/* A group you're no longer in fades (Paper: "Groups: receipts, leaving, deleting"). */}
+            <Avatar
+              id={item.kind === 'dm' ? item.peer.id : item.chatId}
+              name={title(item)}
+              className={cn(item.kind === 'group' && !item.active && 'opacity-45')}
+            />
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="truncate text-[15px] leading-[18px] font-semibold group-data-[status=active]:text-paper">
-                {item.peer.name}
+                {title(item)}
               </span>
               <span
                 className={cn(
@@ -81,13 +92,7 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
                   typing[item.chatId]?.length && 'font-medium text-cobalt'
                 )}
               >
-                {typing[item.chatId]?.length
-                  ? 'typing…'
-                  : !item.preview
-                    ? `@${item.peer.username}`
-                    : item.preview.deleted
-                      ? `${item.preview.sender === user.id ? 'You' : item.peer.name.split(' ')[0]} deleted a message`
-                      : `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`}
+                {typing[item.chatId]?.length ? 'typing…' : preview(item, user.id)}
               </span>
             </div>
             <div className="flex w-11 shrink-0 flex-col items-end gap-1.5 self-start pt-0.5">
@@ -124,4 +129,16 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
       </div>
     </aside>
   )
+}
+
+const title = (item: InboxItem) => (item.kind === 'dm' ? item.peer.name : item.name)
+
+/** The line under a chat's name: its newest message or group event, and who it's from. */
+function preview(item: InboxItem, uid: string) {
+  const p = item.preview
+  if (!p) return item.kind === 'dm' ? `@${item.peer.username}` : ''
+  if (p.kind === 'system') return describeText(p.body, uid)
+  const from = p.sender === uid ? 'You' : firstName(item.kind === 'dm' ? item.peer.name : (p.name ?? 'Someone'))
+  if (p.deleted) return `${from} deleted a message`
+  return item.kind === 'group' || p.sender === uid ? `${from}: ${p.body}` : p.body
 }

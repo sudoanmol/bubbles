@@ -25,7 +25,7 @@ export function openStore(uid: string) {
   if (current?.uid === uid) return
   current = {
     uid,
-    db: openDB<Schema>(`bubbles-${uid}`, 3, {
+    db: openDB<Schema>(`bubbles-${uid}`, 4, {
       upgrade(db, from, _to, tx) {
         // Before version 2 the local copy is started over; it is only a cache of the server.
         if (from < 2) {
@@ -35,8 +35,8 @@ export function openStore(uid: string) {
           db.createObjectStore('inbox', { keyPath: 'chatId' })
           db.createObjectStore('chats', { keyPath: 'id' })
         }
-        // 3: the inbox and chats gained read state. Refetched; the outbox (unsent messages) is kept.
-        if (from === 2) {
+        // 3: the inbox and chats gained read state; 4: groups. Refetched; the outbox (unsent messages) is kept.
+        if (from === 2 || from === 3) {
           void tx.objectStore('inbox').clear()
           void tx.objectStore('chats').clear()
         }
@@ -164,3 +164,15 @@ export const saveInboxItem = (item: InboxItem) => use(undefined, (db) => db.put(
 export const cachedChat = (id: string) => use<Chat | undefined>(undefined, (db) => db.get('chats', id))
 
 export const saveChat = (chat: Chat) => use(undefined, (db) => db.put('chats', chat).then(() => {}))
+
+/** Removes a chat from this device: its messages, members and inbox entry ("Delete chat" on a group you left). */
+export const forgetChat = (chat: string) =>
+  use(undefined, async (db) => {
+    const tx = db.transaction(['messages', 'chats', 'inbox'], 'readwrite')
+    await Promise.all([
+      tx.objectStore('messages').delete(chatRange(chat)),
+      tx.objectStore('chats').delete(chat),
+      tx.objectStore('inbox').delete(chat),
+      tx.done,
+    ])
+  })

@@ -17,6 +17,7 @@ import {
   applyPresence,
   applyRead,
   bumpInbox,
+  chatQuery,
   clearUnread,
   inboxQuery,
   messagesQuery,
@@ -164,6 +165,8 @@ function receive(queryClient: QueryClient, msg: Message) {
   void saveMessages(msg.chat, [msg])
   // Their message replaces the dots.
   if (msg.kind === 'text') stopTyping(msg.chat, msg.sender)
+  // A group event changes who's in the chat, their roles or its name.
+  if (msg.kind === 'system') void queryClient.invalidateQueries({ queryKey: chatQuery(msg.chat).queryKey })
   // A message past a gap shows right away; the gap is fetched now if the chat is on screen, or when it next opens.
   const hi = held && cursor(held)
   if (hi !== undefined && msg.seq > hi + 1) void queryClient.invalidateQueries({ queryKey })

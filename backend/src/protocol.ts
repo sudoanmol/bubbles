@@ -16,8 +16,8 @@ const Reply = v.object({ seq: v.number(), sender: v.string(), body: v.string() }
 /**
  * One entry in a chat's log; every entry gets the next `seq`. A `text` entry is a message, and its fields hold the
  * message's current state as of `rev` (the seq of the last change to it). A `patch` entry is an edit, delete or
- * reaction to the message at `target`, and carries that message's state after the change. Changes being log entries
- * means gap repair covers them too.
+ * reaction to the message at `target`, and carries that message's state after the change. A `system` entry is a
+ * change to a group (its body is a GroupEvent as JSON). Changes being log entries means gap repair covers them too.
  */
 const Entry = {
   chat: v.string(),
@@ -37,9 +37,31 @@ const Entry = {
 export const Message = v.variant('kind', [
   v.object({ ...Entry, kind: v.literal('text'), target: v.null() }),
   v.object({ ...Entry, kind: v.literal('patch'), target: v.number() }),
+  v.object({ ...Entry, kind: v.literal('system'), target: v.null() }),
 ])
 export type Message = v.InferOutput<typeof Message>
 export type Text = Extract<Message, { kind: 'text' }>
+export type System = Extract<Message, { kind: 'system' }>
+
+/** Most members a group can have: ChatDO fans every entry out to each of them. */
+export const MAX_MEMBERS = 256
+export const MAX_GROUP_NAME = 60
+export const GroupName = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_GROUP_NAME))
+
+/** Someone named in a group event, with their name as it was then, so the event reads the same everywhere. */
+export type Person = { id: string; name: string }
+
+/** A change to a group, made by `by`. Stored as the body of a `system` entry. */
+export type GroupEvent =
+  | { t: 'created'; by: Person; name: string }
+  | { t: 'added'; by: Person; users: Person[]; name: string }
+  | { t: 'left'; by: Person }
+  | { t: 'removed'; by: Person; user: Person }
+  | { t: 'renamed'; by: Person; name: string }
+  | { t: 'admin'; by: Person; user: Person; admin: boolean }
+  | { t: 'deleted'; by: Person }
+
+export const groupEvent = (m: System) => JSON.parse(m.body) as GroupEvent
 
 /** The parts of a message that patches change. */
 export type MessageState = Pick<Message, 'body' | 'reply' | 'edited' | 'deleted' | 'reactions'>
@@ -127,18 +149,29 @@ export type Presence = { online: boolean; lastSeen: number | null }
 
 export type Profile = { id: string; name: string; username: string; image: string | null }
 
-/** The newest message in a chat, at its state as of `rev`. */
-export type Preview = { seq: number; sender: string; body: string; deleted: boolean; rev: number }
+/**
+ * The newest message or group event in a chat, at its state as of `rev`. `name` is the sender's name in a group,
+ * filled in where it's known (the inbox API, or the chat's member list).
+ */
+export type Preview = {
+  seq: number
+  kind: 'text' | 'system'
+  sender: string
+  body: string
+  deleted: boolean
+  rev: number
+  name?: string
+}
 
 /**
  * The preview after a log entry: a newer message replaces it, and a newer copy of it or a patch to it updates it.
  * Comparing revisions makes it safe to apply an entry twice. UserDO and the client both keep their inbox with it.
  */
 export function nextPreview(cur: Preview | null, m: Message): Preview | null {
-  if (m.kind === 'text')
+  if (m.kind !== 'patch')
     return cur && (m.seq < cur.seq || (m.seq === cur.seq && m.rev <= cur.rev))
       ? cur
-      : { seq: m.seq, sender: m.sender, body: m.body, deleted: m.deleted, rev: m.rev }
+      : { seq: m.seq, kind: m.kind, sender: m.sender, body: m.body, deleted: m.deleted, rev: m.rev }
   return cur?.seq === m.target && m.seq > cur.rev ? { ...cur, body: m.body, deleted: m.deleted, rev: m.seq } : cur
 }
 
@@ -157,14 +190,57 @@ export function nextRead(s: ReadState, m: Message, uid: string): ReadState {
   return { ...s, lastSeq: m.seq, unread: s.unread + (m.seq > s.readSeq ? 1 : 0) }
 }
 
+/** A group's name, and whether this user is still in it. */
+export type GroupState = { name: string; active: boolean }
+
+/**
+ * A group's state after a log entry, as seen by `uid`: a new name, or `uid` joining or leaving it (left, removed, or
+ * the group deleted). Callers skip entries they've applied already. UserDO and the client both keep their inbox with it.
+ */
+export function nextGroup(s: GroupState, m: Message, uid: string): GroupState {
+  if (m.kind !== 'system') return s
+  const e = groupEvent(m)
+  switch (e.t) {
+    case 'created':
+    case 'renamed':
+      return { ...s, name: e.name }
+    case 'added':
+      // Carries the current name, so someone added back sees a rename they missed while out.
+      return e.users.some((u) => u.id === uid) ? { name: e.name, active: true } : s
+    case 'removed':
+      return e.user.id === uid ? { ...s, active: false } : s
+    case 'left':
+      return e.by.id === uid ? { ...s, active: false } : s
+    case 'deleted':
+      return { ...s, active: false }
+    default:
+      return s
+  }
+}
+
 export type InboxItem = ReadState & {
   chatId: string
-  peer: Profile
   preview: Preview | null
   updatedAt: number
-}
+} & ({ kind: 'dm'; peer: Profile } | ({ kind: 'group' } & GroupState))
 
 export type Read = { seq: number; ts: number }
 
-/** `reads`: how far each member has read, by user id. */
-export type Chat = { id: string; members: Profile[]; reads: Record<string, Read> }
+export type Role = 'admin' | 'member'
+
+/**
+ * A chat member. `left` is the seq of the entry that took them out (left, removed, or the group deleted), or null while
+ * they're in it; they stay listed for the history's sake.
+ */
+export type Member = Profile & { role: Role; left: number | null }
+
+/**
+ * `reads`: how far each member has read, by user id. `group` is null for a DM; for a user no longer in the group,
+ * `leftBy` says why: who removed them, themselves if they left, or whoever deleted the group.
+ */
+export type Chat = {
+  id: string
+  members: Member[]
+  reads: Record<string, Read>
+  group: { name: string; deleted: boolean; leftBy: string | null } | null
+}

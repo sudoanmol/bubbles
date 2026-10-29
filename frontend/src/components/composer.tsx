@@ -170,7 +170,7 @@ export function Composer({
                   queryClient.getQueryData(messagesQuery(chatId).queryKey) ?? [],
                   queryClient.getQueryData(outboxQuery.queryKey) ?? [],
                   uid
-                ).findLast((m) => m.sender === uid && m.seq !== null && !m.deleted)
+                ).findLast((m) => m.kind === 'text' && m.sender === uid && m.seq !== null && !m.deleted)
                 if (last && canEdit(last, uid, Date.now())) {
                   e.preventDefault()
                   onMode({ t: 'edit', message: last })

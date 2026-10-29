@@ -6,9 +6,11 @@ import assert from 'node:assert/strict'
 import {
   applyPatch,
   EDIT_WINDOW_MS,
+  nextGroup,
   nextPreview,
   nextRead,
   type Message,
+  type GroupEvent,
   type ReadState,
   type Text,
 } from '../backend/src/protocol.ts'
@@ -66,7 +68,7 @@ for (const order of [...permutations(stale), ...permutations([...stale, fresh])]
 
 // The inbox preview: a newer message replaces it, an edit to it updates it, and nothing older or repeated undoes that.
 const previewOf = (ms: Message[]) => ms.reduce(nextPreview, null)
-const edited = { seq: 1, sender: 'a', body: 'edited', deleted: false, rev: 2 }
+const edited = { seq: 1, kind: 'text', sender: 'a', body: 'edited', deleted: false, rev: 2 }
 assert.deepEqual(previewOf([text(1), patch(2, 1, { body: 'edited' })]), edited)
 assert.deepEqual(
   previewOf([text(1), patch(2, 1, { body: 'edited' }), text(1), patch(2, 1, { body: 'edited' })]),
@@ -74,6 +76,7 @@ assert.deepEqual(
 )
 assert.deepEqual(previewOf([text(1), text(3), patch(2, 1, { body: 'edited' })]), {
   seq: 3,
+  kind: 'text',
   sender: 'a',
   body: 'hi 3',
   deleted: false,
@@ -129,5 +132,27 @@ const edit = { t: 'edit', cid: 'e', chat, seq: 1, body: 'late' } as const
 assert.equal(typeof applyPatch(text(1), edit, 'a', 1 + EDIT_WINDOW_MS), 'object')
 assert.equal(typeof applyPatch(text(1), edit, 'a', 2 + EDIT_WINDOW_MS), 'string')
 assert.equal(typeof applyPatch(text(1), { ...edit, t: 'delete' }, 'a', 2 + EDIT_WINDOW_MS), 'object')
+
+// A group's name and your place in it follow its events: removal takes you out, being added back puts you in (with any rename you missed), and
+// someone else leaving changes nothing for you. Group events never count as unread.
+const event = (seq: number, e: GroupEvent): Message => ({ ...text(seq, { body: JSON.stringify(e) }), kind: 'system' })
+const by = { id: 'b', name: 'Bo' }
+const me = { id: 'a', name: 'Al' }
+const events = [
+  event(1, { t: 'created', by, name: 'Climbers' }),
+  event(2, { t: 'renamed', by, name: 'Friday climbers' }),
+  event(3, { t: 'removed', by, user: me }),
+]
+const groupAfter = (ms: Message[]) => ms.reduce((s, m) => nextGroup(s, m, 'a'), { name: '', active: true })
+assert.deepEqual(groupAfter(events), { name: 'Friday climbers', active: false })
+assert.deepEqual(
+  groupAfter([
+    event(3, { t: 'removed', by, user: me }),
+    event(4, { t: 'added', by, users: [me], name: 'Friday climbers' }),
+  ]),
+  { name: 'Friday climbers', active: true }
+)
+assert.deepEqual(groupAfter([event(5, { t: 'left', by })]).active, true)
+assert.equal(readAfter(events).unread, 0)
 
 console.log('PASS: log rules')

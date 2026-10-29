@@ -1,5 +1,6 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
 import {
+  nextGroup,
   nextPreview,
   nextRead,
   type Chat,
@@ -18,6 +19,7 @@ import {
   cachedMessages,
   checkAccount,
   currentUid,
+  forgetChat,
   saveChat,
   saveInbox,
   saveInboxItem,
@@ -125,6 +127,56 @@ export const searchUsersQuery = (q: string) =>
 
 export const openDm = (username: string) => api<{ chatId: string }>(`/dms/${username}`, { method: 'POST' })
 
+const json = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { 'content-type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
+
+export const createGroup = (name: string, members: string[]) =>
+  api<{ chatId: string }>('/chats', json('POST', { name, members }))
+
+/**
+ * A change to a group, made online (it isn't queued in the outbox). The entries it adds also arrive over the socket;
+ * applying them here shows the change at once.
+ */
+export type GroupChange =
+  | { t: 'rename'; name: string }
+  | { t: 'add'; ids: string[] }
+  | { t: 'remove'; id: string }
+  | { t: 'admin'; id: string; admin: boolean }
+  | { t: 'leave'; successor?: string }
+  | { t: 'delete' }
+
+export async function changeGroup(queryClient: QueryClient, chat: string, change: GroupChange) {
+  const base = `/chats/${chat}`
+  const [path, init] =
+    change.t === 'rename'
+      ? [base, json('PATCH', { name: change.name })]
+      : change.t === 'add'
+        ? [`${base}/members`, json('POST', { ids: change.ids })]
+        : change.t === 'remove'
+          ? [`${base}/members/${change.id}`, json('DELETE')]
+          : change.t === 'admin'
+            ? [`${base}/members/${change.id}`, json('PATCH', { admin: change.admin })]
+            : change.t === 'leave'
+              ? [`${base}/leave`, json('POST', { successor: change.successor })]
+              : [base, json('DELETE')]
+  const entries = await api<Message[]>(path, init)
+  upsertMessages(queryClient, chat, entries)
+  void saveMessages(chat, entries)
+  await queryClient.invalidateQueries({ queryKey: chatQuery(chat).queryKey })
+}
+
+/** "Delete chat" on a group you're no longer in: gone from the inbox here, on the server, and from this device. */
+export async function deleteChat(queryClient: QueryClient, chat: string) {
+  await api(`/inbox/${chat}`, json('DELETE')).catch(() => null)
+  queryClient.setQueryData<InboxItem[]>(inboxQuery.queryKey, (items) => items?.filter((i) => i.chatId !== chat))
+  queryClient.removeQueries({ queryKey: ['messages', chat] })
+  queryClient.removeQueries({ queryKey: ['chat', chat] })
+  await forgetChat(chat)
+}
+
 /** Puts the inbox from the local copy into the cache, so the sidebar renders before the network answers. */
 export async function hydrateInbox(queryClient: QueryClient) {
   if (queryClient.getQueryData(inboxQuery.queryKey)) return
@@ -186,20 +238,29 @@ export function upsertMessages(queryClient: QueryClient, chat: string, entries: 
 
 /**
  * Keeps the inbox in step with a live log entry, by the same rules as UserDO: a new message moves the chat to the top
- * as its preview and counts as unread unless it's yours; a change to the previewed message updates it. Returns false if the chat is not in the cache yet.
+ * as its preview and counts as unread unless it's yours; a change to the previewed message updates it; a group event
+ * renames the group or takes you out of it. Returns false if the inbox needs a refetch: the chat isn't in it yet, or
+ * a group preview's sender isn't known here.
  */
 export function bumpInbox(queryClient: QueryClient, msg: Message, uid: string) {
   let found = false
   queryClient.setQueryData<InboxItem[]>(inboxQuery.queryKey, (items) => {
     const item = items?.find((i) => i.chatId === msg.chat)
     if (!items || !item) return items
-    found = true
-    const preview = nextPreview(item.preview, msg)
-    if (preview === item.preview && msg.seq <= item.lastSeq) return items
+    let preview = nextPreview(item.preview, msg)
+    if (preview === item.preview && msg.seq <= item.lastSeq) return ((found = true), items)
     const newer = preview !== null && preview.seq !== item.preview?.seq
-    const updated = {
+    if (item.kind === 'group' && preview && newer && preview.kind === 'text' && preview.sender !== uid) {
+      const chat = queryClient.getQueryData<Chat>(chatQuery(msg.chat).queryKey)
+      const name = chat?.members.find((m) => m.id === preview!.sender)?.name
+      if (!name) return items
+      preview = { ...preview, name }
+    }
+    found = true
+    const updated: InboxItem = {
       ...item,
       ...nextRead(item, msg, uid),
+      ...(item.kind === 'group' && msg.seq > item.lastSeq ? nextGroup(item, msg, uid) : {}),
       preview,
       updatedAt: newer ? msg.ts : item.updatedAt,
     }
