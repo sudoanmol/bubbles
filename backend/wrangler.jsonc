@@ -22,5 +22,15 @@
       { "name": "CHAT", "class_name": "ChatDO" },
     ],
   },
+  // Counts are per Cloudflare location and approximate; period must be 10 or 60 seconds. Namespace ids are shared
+  // across the whole account, so these use a range no other project takes.
+  "ratelimits": [
+    // Every socket frame a user sends: messages, changes, typing, reads.
+    { "name": "FRAME_LIMIT", "namespace_id": "4201", "simple": { "limit": 60, "period": 10 } },
+    // Socket connects per user; reconnect loops and many tabs stay well under it.
+    { "name": "CONNECT_LIMIT", "namespace_id": "4202", "simple": { "limit": 20, "period": 60 } },
+    // Sign-in and sign-up attempts per IP.
+    { "name": "AUTH_LIMIT", "namespace_id": "4203", "simple": { "limit": 10, "period": 60 } },
+  ],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserDO", "ChatDO"] }],
 }

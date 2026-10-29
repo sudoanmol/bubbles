@@ -17,6 +17,9 @@ export const authOptions = {
   plugins: [username()],
   // Signed cookie carries the session for 5 min, so most requests skip D1.
   session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
+  // Limited in front of the handler with the Rate Limiting binding; Better Auth's own limiter keeps counts in memory,
+  // per isolate, which Workers can't share.
+  rateLimit: { enabled: false },
   advanced: { ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] } },
 } satisfies BetterAuthOptions
 

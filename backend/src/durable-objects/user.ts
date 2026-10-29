@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import * as v from 'valibot'
 
+import { allowed } from '../env'
 import {
   ClientFrame,
   nextGroup,
@@ -108,6 +109,13 @@ export class UserDO extends DurableObject<CloudflareBindings> {
       frame = v.parse(Frame, data)
     } catch {
       return send(ws, { t: 'error', message: 'Invalid frame' })
+    }
+
+    if (!(await allowed(this.env, this.env.FRAME_LIMIT, this.uid))) {
+      // A refusal, not a failure: the client shows the message as not sent instead of replaying it into the limit.
+      if (frame.t === 'read' || frame.t === 'typing') return
+
+      return send(ws, { t: 'error', cid: frame.cid, message: 'Slow down: too many messages' })
     }
 
     if (frame.t === 'read') return this.read(frame.chat, frame.seq)
