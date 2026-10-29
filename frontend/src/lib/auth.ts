@@ -1,7 +1,7 @@
 import { usernameClient } from 'better-auth/client/plugins'
 import { createAuthClient } from 'better-auth/react'
 
-// Loaded only by the /login pages; signed-in pages use lib/session.
+// Loaded only by the /login pages and the lazily loaded profile dialog; the rest of the app reads lib/session.
 export const authClient = createAuthClient({ plugins: [usernameClient()] })
 
 // Better Auth returns `{ data, error }`; mutations need a thrown error.
