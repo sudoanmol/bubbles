@@ -86,7 +86,7 @@ export function Sidebar({ user, className }: { user: Session['user']; className?
                   : !item.preview
                     ? `@${item.peer.username}`
                     : item.preview.deleted
-                      ? 'Message deleted'
+                      ? `${item.preview.sender === user.id ? 'You' : item.peer.name.split(' ')[0]} deleted a message`
                       : `${item.preview.sender === user.id ? 'You: ' : ''}${item.preview.body}`}
               </span>
             </div>
