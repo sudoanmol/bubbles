@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build",
+    "deploy": "pnpm -C backend db:migrate:remote && pnpm -C backend deploy && pnpm -C frontend deploy",
     "typecheck": "pnpm -r run typecheck && tsc -p tests",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
