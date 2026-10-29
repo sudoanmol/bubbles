@@ -254,7 +254,7 @@ function MessageList({
                               {m.deleted ? (
                                 <div
                                   className={cn(
-                                    'flex w-fit items-center gap-2 rounded-bubble border-[1.5px] border-dashed border-[#c9c9c9] px-4 py-[11px] text-[15px] leading-[22px] text-muted-foreground italic group-data-[align=end]/message:self-end',
+                                    'flex w-fit items-center gap-2 rounded-bubble border-[1.5px] border-dashed border-dash px-4 py-[11px] text-[15px] leading-[22px] text-muted-foreground italic group-data-[align=end]/message:self-end',
                                     corners(mine, i === 0, i === run.length - 1)
                                   )}
                                 >

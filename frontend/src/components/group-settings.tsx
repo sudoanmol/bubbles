@@ -108,7 +108,7 @@ export default function GroupSettings({
                   onClick={() => setView('add')}
                   className="flex items-center gap-3 rounded-[14px] p-2 text-left transition-colors hover:bg-wash"
                 >
-                  <span className="flex size-10 items-center justify-center rounded-full border-2 border-dashed border-[#cfcfcf]">
+                  <span className="flex size-10 items-center justify-center rounded-full border-2 border-dashed border-dash">
                     <PlusIcon className="size-[18px]" strokeWidth={2.75} />
                   </span>
                   <span className="text-[15px] font-semibold">Add people</span>

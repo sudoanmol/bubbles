@@ -10,6 +10,9 @@
   --color-ink: #121212;
   --color-line: #ededed;
   --color-wash: #f6f6f4;
+  /* Dashed outlines and empty controls; disabled icons. */
+  --color-dash: #cfcfcf;
+  --color-faded: #b5b5b5;
   --color-sun: #ffd43b;
   --color-cobalt: #2e5bff;
   --color-gum: #ff7eb6;
@@ -51,6 +54,8 @@
   --color-ink: #f4f4f2;
   --color-line: #2a2a2a;
   --color-wash: #0b0b0b;
+  --color-dash: #3d3d3d;
+  --color-faded: #5a5a5a;
   --color-muted-foreground: #9a9a9a;
 }
 

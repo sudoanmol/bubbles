@@ -211,7 +211,7 @@ export function Composer({
               type="button"
               aria-label="Add more photos"
               onClick={() => filePicker.current?.click()}
-              className="flex size-[72px] shrink-0 items-center justify-center rounded-[14px] border-2 border-dashed border-[#cfcfcf] text-muted-foreground transition-colors hover:border-ink hover:text-ink"
+              className="flex size-[72px] shrink-0 items-center justify-center rounded-[14px] border-2 border-dashed border-dash text-muted-foreground transition-colors hover:border-ink hover:text-ink"
             >
               <PlusIcon className="size-5" strokeWidth={2.75} />
             </button>
@@ -236,7 +236,7 @@ export function Composer({
           aria-label="Add photos"
           disabled={editing || photos.length >= MAX_IMAGES}
           onClick={() => filePicker.current?.click()}
-          className="relative -top-1 flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-paper text-ink shadow-[2px_2px_0_var(--color-ink)] transition-colors hover:bg-sun hover:text-black disabled:border-dashed disabled:border-[#cfcfcf] disabled:text-[#b5b5b5] disabled:shadow-none disabled:hover:bg-paper"
+          className="relative -top-1 flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-paper text-ink shadow-[2px_2px_0_var(--color-ink)] transition-colors hover:bg-sun hover:text-black disabled:border-dashed disabled:border-dash disabled:text-faded disabled:shadow-none disabled:hover:bg-paper"
         >
           <PlusIcon className="size-5" strokeWidth={2.75} />
         </button>
@@ -313,7 +313,7 @@ export function Composer({
             type="submit"
             aria-label="Send"
             disabled={!ready}
-            className="mb-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-sun text-black transition-colors disabled:cursor-default disabled:border-transparent disabled:bg-wash disabled:text-[#b5b5b5]"
+            className="mb-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-sun text-black transition-colors disabled:cursor-default disabled:border-transparent disabled:bg-wash disabled:text-faded"
           >
             <ArrowUpIcon className="size-[18px]" strokeWidth={2.75} />
           </button>
