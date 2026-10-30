@@ -144,6 +144,14 @@ The app runs on [localhost:3100](http://localhost:3100) and the API on :8790. `p
 | `pnpm knip`             | Unused files, exports and dependencies                                                                                                                        |
 | `pnpm build`            | Production build                                                                                                                                              |
 
+## Local checks
+
+```sh
+pnpm lint        # oxlint (pnpm lint:fix to autofix)
+pnpm fmt:check   # oxfmt --check (pnpm fmt to write)
+pnpm test        # rule, store and Durable Object tests
+```
+
 ## Deployment
 
 Production runs on Cloudflare Workers. Every push to `main` runs the checks in GitHub Actions, and when they pass it deploys: D1 migrations, then the backend, then the frontend. The frontend's service binding needs `bubbles-api` to exist, so the backend always goes first.
